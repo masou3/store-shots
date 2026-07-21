@@ -110,7 +110,8 @@ function computeSlideGeom(
   const zoneH = insetY + (setBlockH ?? text.blockH) + gap;
   const slotTop = layout.textPosition === 'top' ? zoneH : 0;
   const slotBottom = layout.textPosition === 'top' ? h : h - zoneH;
-  const blockTop = layout.textPosition === 'top' ? insetY : h - insetY - text.blockH;
+  const blockTopBase = layout.textPosition === 'top' ? insetY : h - insetY - text.blockH;
+  const blockTop = blockTopBase + (layout.textOffsetY ?? 0);
   const bmp = slide.imageKey ? getBitmap(slide.imageKey) : null;
   const geo = deviceGeometry(theme, layout, size, slotTop, slotBottom, bmp ? bmp.width / bmp.height : null);
   const overlap = layout.overlapNext ?? 0;
@@ -119,6 +120,8 @@ function computeSlideGeom(
     // next frame; the next frame draws the same device at cx - w.
     geo.cx = w + overlap * geo.bboxW - geo.bboxW / 2;
   }
+  // Free-drag horizontal nudge, on top of the centred (or overlap) position.
+  geo.cx += layout.deviceOffsetX ?? 0;
   return { layout, text, blockTop, geo, bmp };
 }
 
@@ -151,11 +154,42 @@ export function renderSlide(
     drawDevice(ctx, prev.bmp, theme, prev.layout, { ...prev.geo, cx: prev.geo.cx - w }, scale);
   }
 
-  drawTextBlock(ctx, cur.text, theme, w, cur.blockTop);
+  drawTextBlock(ctx, cur.text, theme, w, cur.blockTop, cur.layout.textOffsetX ?? 0);
   drawDevice(ctx, cur.bmp, theme, cur.layout, cur.geo, scale);
   drawGrain(ctx, w, h, theme.grain);
 
   ctx.restore();
+}
+
+export type HitRegions = {
+  device: { cx: number; cy: number; w: number; h: number };
+  text: { x: number; y: number; w: number; h: number };
+};
+
+// Axis-aligned bounding boxes (store coords) of the device and the text block,
+// for drag hit-testing in the preview. Computed through the SAME geometry as
+// renderSlide (computeSlideGeom), so a region always matches what's drawn —
+// including the drag offsets already folded in. Device box is the rotated
+// bbox; text box is the wrap width by the measured block height.
+export function hitRegions(
+  slide: Slide,
+  theme: Theme,
+  size: StoreSize,
+  opts: RenderOpts = {},
+): HitRegions {
+  const ctx = scratchCtx();
+  const { text, blockTop, geo } = computeSlideGeom(ctx, slide, theme, size, opts.setBlockH);
+  const theta = (Math.abs(slide.layout.deviceRotation) * Math.PI) / 180;
+  const bboxH = geo.outerW * Math.sin(theta) + geo.outerH * Math.cos(theta);
+  return {
+    device: { cx: geo.cx, cy: geo.cy, w: geo.bboxW, h: bboxH },
+    text: {
+      x: (size.width - text.maxW) / 2 + (slide.layout.textOffsetX ?? 0),
+      y: blockTop,
+      w: text.maxW,
+      h: text.blockH,
+    },
+  };
 }
 
 // Background is a per-slide photo when set, otherwise the theme gradient/solid.
@@ -352,16 +386,17 @@ function drawTextBlock(
   theme: Theme,
   w: number,
   blockTop: number,
+  offsetX = 0,
 ): void {
   const t = theme.text;
   ctx.textAlign = t.align;
   ctx.textBaseline = 'alphabetic';
   const x =
-    t.align === 'left'
+    (t.align === 'left'
       ? (w - text.maxW) / 2
       : t.align === 'right'
         ? (w + text.maxW) / 2
-        : w / 2;
+        : w / 2) + offsetX;
 
   ctx.fillStyle = t.colour;
   ctx.font = text.headlineFont;

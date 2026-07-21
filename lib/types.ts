@@ -30,9 +30,14 @@ export type SlideLayout = {
   deviceWidthPct: number; // bleed mode: device width as a fraction of canvas width (capped)
   deviceShadow: boolean;
   deviceScale: number; // 0.4 .. 1.2
+  deviceOffsetX?: number; // px in store space, free-drag horizontal nudge (mirrors deviceOffsetY)
   deviceOffsetY: number; // px in store space, allows bleed off the edge
   deviceRotation: number; // -15 .. 15 degrees
   imageFit: 'cover' | 'contain'; // cover centre-crops (the normal case), contain letterboxes
+  // Free-drag nudge of the text block, px in store space, on top of the
+  // computed position. Set by dragging the text in the preview.
+  textOffsetX?: number;
+  textOffsetY?: number;
   // Hero span: fraction of the device's bounding box that hangs past the right
   // edge into the NEXT frame. 0 = off. The next frame redraws this device on
   // its left edge (see RenderOpts.spillPrev), so the two exported PNGs line up

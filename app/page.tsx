@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DragEvent } from 'react';
-import type { Slide, StoreSize, Theme } from '@/lib/types';
+import type { Slide, SlideLayout, StoreSize, Theme } from '@/lib/types';
 import { getSize } from '@/lib/sizes';
 import {
   STORE_KINDS,
@@ -17,7 +17,7 @@ import { LAYOUTS } from '@/lib/layouts';
 import { GRADIENT_PACKS } from '@/lib/presets';
 import { FONT_FAMILIES, loadRenderFonts } from '@/lib/fonts';
 import { copyWarning } from '@/lib/copyWarning';
-import { renderSlide, drawSafeAreaOverlay, measureSetTextZone } from '@/lib/render';
+import { renderSlide, drawSafeAreaOverlay, measureSetTextZone, hitRegions } from '@/lib/render';
 import JSZip from 'jszip';
 import { exportSlidePng, downloadBlob } from '@/lib/export';
 import { removeImage, saveImage } from '@/lib/imageStore';
@@ -321,6 +321,17 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef(0);
+  // Preview drag: which element is grabbed and the offsets/pointer at grab time.
+  const dragRef = useRef<{
+    target: 'device' | 'text';
+    startSX: number;
+    startSY: number;
+    baseX: number;
+    baseY: number;
+    base: SlideLayout;
+    moved: boolean;
+  } | null>(null);
+  const didDragRef = useRef(false);
   const [fontsReady, setFontsReady] = useState(false);
   const [showSafeArea, setShowSafeArea] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -513,6 +524,95 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
     setRowBox({ w: container.clientWidth, h: container.clientHeight });
     return () => ro.disconnect();
   }, [draw, viewMode]);
+
+  // Pointer position in store coordinates (the space renderSlide draws in).
+  const eventToStore = useCallback(
+    (e: { clientX: number; clientY: number }) => {
+      const canvas = canvasRef.current!;
+      const rect = canvas.getBoundingClientRect();
+      return {
+        sx: ((e.clientX - rect.left) / rect.width) * size.width,
+        sy: ((e.clientY - rect.top) / rect.height) * size.height,
+      };
+    },
+    [size.width, size.height],
+  );
+
+  // Drag the device or text box directly on the preview. Device is drawn on
+  // top, so it wins when the two hit boxes overlap. A grab that never moves far
+  // enough falls through to onClick (the screenshot picker).
+  const onCanvasPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLCanvasElement>) => {
+      if (e.button !== 0) return;
+      const { sx, sy } = eventToStore(e);
+      const prev = currentIndex > 0 ? slides[currentIndex - 1] : undefined;
+      const r = hitRegions(slide, theme, size, {
+        setBlockH,
+        spillPrev: prev?.layout.overlapNext ? prev : undefined,
+      });
+      const inDevice =
+        Math.abs(sx - r.device.cx) <= r.device.w / 2 && Math.abs(sy - r.device.cy) <= r.device.h / 2;
+      const inText =
+        sx >= r.text.x && sx <= r.text.x + r.text.w && sy >= r.text.y && sy <= r.text.y + r.text.h;
+      const target = inDevice ? 'device' : inText ? 'text' : null;
+      if (!target) return;
+      const L = slide.layout;
+      dragRef.current = {
+        target,
+        startSX: sx,
+        startSY: sy,
+        baseX: target === 'device' ? L.deviceOffsetX ?? 0 : L.textOffsetX ?? 0,
+        baseY: target === 'device' ? L.deviceOffsetY : L.textOffsetY ?? 0,
+        base: L,
+        moved: false,
+      };
+      canvasRef.current?.setPointerCapture(e.pointerId);
+    },
+    [eventToStore, slide, theme, size, setBlockH, currentIndex, slides],
+  );
+
+  const onCanvasPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLCanvasElement>) => {
+      const d = dragRef.current;
+      const canvas = canvasRef.current;
+      if (!d) {
+        // Not dragging: show a move cursor when hovering a draggable element.
+        if (!canvas) return;
+        const { sx, sy } = eventToStore(e);
+        const prev = currentIndex > 0 ? slides[currentIndex - 1] : undefined;
+        const r = hitRegions(slide, theme, size, {
+          setBlockH,
+          spillPrev: prev?.layout.overlapNext ? prev : undefined,
+        });
+        const over =
+          (Math.abs(sx - r.device.cx) <= r.device.w / 2 &&
+            Math.abs(sy - r.device.cy) <= r.device.h / 2) ||
+          (sx >= r.text.x && sx <= r.text.x + r.text.w && sy >= r.text.y && sy <= r.text.y + r.text.h);
+        canvas.style.cursor = over ? 'move' : 'pointer';
+        return;
+      }
+      const { sx, sy } = eventToStore(e);
+      const dx = sx - d.startSX;
+      const dy = sy - d.startSY;
+      // Threshold in store px scaled to CSS so it's a few real pixels either way.
+      const rect = canvasRef.current!.getBoundingClientRect();
+      const cssMove = Math.hypot((dx / size.width) * rect.width, (dy / size.height) * rect.height);
+      if (!d.moved && cssMove < 3) return;
+      d.moved = true;
+      didDragRef.current = true;
+      const patch: Partial<SlideLayout> =
+        d.target === 'device'
+          ? { deviceOffsetX: d.baseX + dx, deviceOffsetY: d.baseY + dy }
+          : { textOffsetX: d.baseX + dx, textOffsetY: d.baseY + dy };
+      patchSlide(slide.id, { layout: { ...d.base, ...patch } });
+    },
+    [eventToStore, patchSlide, slide.id, slide, theme, size, setBlockH, currentIndex, slides],
+  );
+
+  const onCanvasPointerUp = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (dragRef.current) canvasRef.current?.releasePointerCapture(e.pointerId);
+    dragRef.current = null;
+  }, []);
 
   const ROW_GAP = 8;
   const rowSlideH = Math.max(
@@ -1088,6 +1188,17 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
                 className="w-36"
               />
             </Row>
+            <Row label={`Offset X ${slide.layout.deviceOffsetX ?? 0}`}>
+              <input
+                type="range"
+                min={-600}
+                max={600}
+                step={4}
+                value={slide.layout.deviceOffsetX ?? 0}
+                onChange={(e) => patchLayout({ deviceOffsetX: Number(e.target.value) })}
+                className="w-36"
+              />
+            </Row>
             <Row label={`Offset Y ${slide.layout.deviceOffsetY}`}>
               <input
                 type="range"
@@ -1098,6 +1209,24 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
                 onChange={(e) => patchLayout({ deviceOffsetY: Number(e.target.value) })}
                 className="w-36"
               />
+            </Row>
+            <Row label="Position">
+              <span className="flex items-center gap-3 text-[11px] text-neutral-500">
+                <span>drag phone / text on canvas</span>
+                <button
+                  onClick={() =>
+                    patchLayout({
+                      deviceOffsetX: 0,
+                      deviceOffsetY: 0,
+                      textOffsetX: 0,
+                      textOffsetY: 0,
+                    })
+                  }
+                  className="underline hover:text-neutral-300"
+                >
+                  reset
+                </button>
+              </span>
             </Row>
             <Row label={`Overlap next ${Math.round((slide.layout.overlapNext ?? 0) * 100)}%`}>
               <input
@@ -1321,9 +1450,21 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
             {viewMode === 'single' ? (
               <canvas
                 ref={canvasRef}
-                onClick={openPicker}
-                className="cursor-pointer rounded shadow-2xl shadow-black/60"
-                title="Click to choose screenshots, or drop / paste"
+                onPointerDown={onCanvasPointerDown}
+                onPointerMove={onCanvasPointerMove}
+                onPointerUp={onCanvasPointerUp}
+                onPointerCancel={onCanvasPointerUp}
+                onClick={() => {
+                  // A completed drag swallows the click so it doesn't also
+                  // open the picker.
+                  if (didDragRef.current) {
+                    didDragRef.current = false;
+                    return;
+                  }
+                  openPicker();
+                }}
+                className="touch-none cursor-pointer rounded shadow-2xl shadow-black/60"
+                title="Click to choose a screenshot · drag the phone or text to reposition"
               />
             ) : (
               <div className="flex items-center justify-center" style={{ gap: ROW_GAP }}>
