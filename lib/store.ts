@@ -22,6 +22,9 @@ const BASE_THEME: Omit<Theme, 'sizeId' | 'frameId' | 'lastFrameId'> = {
     align: 'center',
     lineHeight: 1.1,
     maxWidthPct: 80,
+    accentColour: '#fbbf24',
+    glow: 0,
+    glowColour: '#000000',
   },
 };
 

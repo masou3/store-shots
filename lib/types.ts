@@ -77,6 +77,14 @@ export type Theme = {
     align: 'left' | 'center' | 'right';
     lineHeight: number;
     maxWidthPct: number;
+    // Colour for *accented* spans, marked with asterisks in the headline /
+    // subhead text (e.g. "Track *every* run"). Undefined = fall back to colour.
+    accentColour?: string;
+    // Soft halo behind the text: glow 0 = off, glowColour is the halo colour.
+    // Drawn as a blurred shadow of the glyphs, same device-px caveat as the
+    // device shadow (scaled by hand so preview and export match).
+    glow?: number; // 0 .. 1
+    glowColour?: string;
   };
 };
 

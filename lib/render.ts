@@ -2,7 +2,7 @@ import type { Ctx2D, DeviceSpec, Slide, SlideLayout, StoreSize, Theme } from './
 import { getSpec } from './deviceSpecs';
 import { fillLinearGradient } from './gradient';
 import { drawGrain } from './grain';
-import { wrapText } from './text';
+import { wrapRichText, lineWidth, type RichLine } from './text';
 import { resolveFontFamily } from './fonts';
 import { getBitmap } from './images';
 import {
@@ -24,8 +24,8 @@ import {
 type TextLayout = {
   headlineFont: string;
   subFont: string;
-  headlineLines: string[];
-  subLines: string[];
+  headlineLines: RichLine[];
+  subLines: RichLine[];
   headSize: number;
   headLineH: number;
   subLineH: number;
@@ -154,7 +154,7 @@ export function renderSlide(
     drawDevice(ctx, prev.bmp, theme, prev.layout, { ...prev.geo, cx: prev.geo.cx - w }, scale);
   }
 
-  drawTextBlock(ctx, cur.text, theme, w, cur.blockTop, cur.layout.textOffsetX ?? 0);
+  drawTextBlock(ctx, cur.text, theme, w, cur.blockTop, cur.layout.textOffsetX ?? 0, scale);
   drawDevice(ctx, cur.bmp, theme, cur.layout, cur.geo, scale);
   drawGrain(ctx, w, h, theme.grain);
 
@@ -262,11 +262,11 @@ function layoutText(ctx: Ctx2D, slide: Slide, theme: Theme, w: number): TextLayo
 
   ctx.save();
   ctx.font = headlineFont;
-  const headlineLines = wrapText(ctx, slide.headline, maxW);
-  let subLines: string[] = [];
+  const headlineLines = wrapRichText(ctx, slide.headline, maxW);
+  let subLines: RichLine[] = [];
   if (slide.subhead) {
     ctx.font = subFont;
-    subLines = wrapText(ctx, slide.subhead, maxW);
+    subLines = wrapRichText(ctx, slide.subhead, maxW);
   }
   ctx.restore();
 
@@ -387,36 +387,66 @@ function drawTextBlock(
   w: number,
   blockTop: number,
   offsetX = 0,
+  scale = 1,
 ): void {
   const t = theme.text;
-  ctx.textAlign = t.align;
+  // Segments carry their own colour, so each glyph run is placed by hand with
+  // textAlign 'left'; alignment is applied per line against the maxW box.
+  ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
-  const x =
-    (t.align === 'left'
-      ? (w - text.maxW) / 2
-      : t.align === 'right'
-        ? (w + text.maxW) / 2
-        : w / 2) + offsetX;
+  const baseColour = t.colour;
+  const accentColour = t.accentColour ?? t.colour;
+  const boxLeft = (w - text.maxW) / 2 + offsetX;
 
-  ctx.fillStyle = t.colour;
-  ctx.font = text.headlineFont;
+  type Op = { line: RichLine; y: number; font: string; alpha: number };
+  const ops: Op[] = [];
   let y = blockTop + text.headSize * ASCENT_EM;
   for (const line of text.headlineLines) {
-    ctx.fillText(line, x, y);
+    ops.push({ line, y, font: text.headlineFont, alpha: 1 });
     y += text.headLineH;
   }
-
   if (text.subLines.length > 0) {
     y += text.subGap - text.headLineH + text.subLineH;
-    ctx.save();
-    ctx.globalAlpha = SUBHEAD_ALPHA;
-    ctx.font = text.subFont;
     for (const line of text.subLines) {
-      ctx.fillText(line, x, y);
+      ops.push({ line, y, font: text.subFont, alpha: SUBHEAD_ALPHA });
       y += text.subLineH;
     }
+  }
+
+  const paint = () => {
+    for (const op of ops) {
+      ctx.font = op.font;
+      ctx.globalAlpha = op.alpha;
+      const lw = lineWidth(ctx, op.line);
+      let x =
+        t.align === 'left'
+          ? boxLeft
+          : t.align === 'right'
+            ? boxLeft + text.maxW - lw
+            : boxLeft + (text.maxW - lw) / 2;
+      for (const seg of op.line) {
+        ctx.fillStyle = seg.accent ? accentColour : baseColour;
+        ctx.fillText(seg.text, x, op.y);
+        x += ctx.measureText(seg.text).width;
+      }
+    }
+  };
+
+  // Glow first: a blurred shadow of the glyphs. Two passes so a soft halo still
+  // reads at low strength. Blur is device-px (not scaled by the CTM), so scale
+  // by hand exactly like the device shadow, or preview and export diverge.
+  const glow = t.glow ?? 0;
+  if (glow > 0) {
+    ctx.save();
+    ctx.shadowColor = t.glowColour ?? '#000000';
+    ctx.shadowBlur = text.headSize * 0.6 * glow * scale;
+    paint();
+    paint();
     ctx.restore();
   }
+  paint();
+
+  ctx.globalAlpha = 1;
 }
 
 function noneFallbackAspect(theme: Theme): number {

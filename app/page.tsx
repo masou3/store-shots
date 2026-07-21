@@ -1308,6 +1308,33 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
                 onChange={(e) => patchText({ colour: e.target.value })}
               />
             </Row>
+            <Row label="Accent colour">
+              <input
+                type="color"
+                value={theme.text.accentColour ?? '#fbbf24'}
+                onChange={(e) => patchText({ accentColour: e.target.value })}
+                title="Colour for *asterisked* words in the headline / subhead"
+              />
+            </Row>
+            <Row label={`Text glow ${Math.round((theme.text.glow ?? 0) * 100)}%`}>
+              <span className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.02}
+                  value={theme.text.glow ?? 0}
+                  onChange={(e) => patchText({ glow: Number(e.target.value) })}
+                  className="w-28"
+                />
+                <input
+                  type="color"
+                  value={theme.text.glowColour ?? '#000000'}
+                  onChange={(e) => patchText({ glowColour: e.target.value })}
+                  title="Glow colour"
+                />
+              </span>
+            </Row>
             <Row label="Align">
               <select
                 className={selectCls}
@@ -1403,8 +1430,8 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
               <p className="text-[11px] leading-snug text-amber-400">{subheadWarning}</p>
             )}
             <p className="text-[11px] text-neutral-600">
-              image: drop on the preview, click it, or paste — multi-file drop fans across
-              slides from this one
+              wrap words in *asterisks* to paint them the accent colour · image: drop on the
+              preview, click it, or paste — multi-file drop fans across slides from this one
             </p>
           </Section>
         </aside>
