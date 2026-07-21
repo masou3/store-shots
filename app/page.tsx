@@ -80,7 +80,7 @@ function Thumb({
   selected: boolean;
   fontsReady: boolean;
   imageVersion: number;
-  onSelect: () => void;
+  onSelect: (e: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean }) => void;
   onDelete: () => void;
   onReorder: (from: number, to: number) => void;
 }) {
@@ -178,7 +178,7 @@ function RowSlide({
   selected: boolean;
   fontsReady: boolean;
   imageVersion: number;
-  onSelect: () => void;
+  onSelect: (e: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean }) => void;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
 
@@ -339,10 +339,10 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
     slides,
     currentSlideId,
     sizeId,
-    layoutId,
     exportSizeIds,
   } = activeSet;
   const {
+    selectedIds,
     setSizeId,
     setLayoutId,
     patchTheme,
@@ -351,6 +351,9 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
     patchLayout,
     patchSlide,
     selectSlide,
+    toggleSlideSelection,
+    selectRange,
+    selectAllSlides,
     addSlide,
     deleteSlide,
     reorderSlide,
@@ -365,6 +368,18 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
     switchStore,
     cloneToOther,
   } = store;
+
+  // The screens a layout/device edit currently targets. Empty selection means
+  // just the current slide (mirrors the store's targetIds).
+  const selectedSet =
+    selectedIds.length > 0 ? new Set(selectedIds) : new Set([currentSlideId]);
+  const targetCount = selectedSet.size;
+  // Modifier-aware selection from a thumbnail/row click.
+  const selectFromClick = (e: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean }, id: string) => {
+    if (e.shiftKey) selectRange(id);
+    else if (e.metaKey || e.ctrlKey) toggleSlideSelection(id);
+    else selectSlide(id);
+  };
 
   const size = getSize(sizeId);
   const slide = slides.find((s) => s.id === currentSlideId) ?? slides[0];
@@ -918,7 +933,7 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
             <Row label="Screenshot fit">
               <select
                 className={selectCls}
-                value={theme.layout.imageFit}
+                value={slide.layout.imageFit}
                 onChange={(e) => patchLayout({ imageFit: e.target.value as 'cover' | 'contain' })}
               >
                 <option value="cover">cover</option>
@@ -928,6 +943,33 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
           </Section>
 
           <Section title="Layout">
+            {/* Layout & device dials are per-screen. This line says which
+                screens the controls below will change. */}
+            <div className="mb-2 flex items-center justify-between text-[11px] text-neutral-500">
+              <span>
+                {targetCount === slides.length && slides.length > 1
+                  ? `Editing all ${slides.length} screens`
+                  : targetCount > 1
+                    ? `Editing ${targetCount} screens`
+                    : `Editing screen ${currentIndex + 1}`}
+              </span>
+              {slides.length > 1 &&
+                (targetCount === slides.length ? (
+                  <button
+                    onClick={() => selectSlide(currentSlideId)}
+                    className="underline hover:text-neutral-300"
+                  >
+                    just this one
+                  </button>
+                ) : (
+                  <button
+                    onClick={selectAllSlides}
+                    className="underline hover:text-neutral-300"
+                  >
+                    select all
+                  </button>
+                ))}
+            </div>
             <div className="flex flex-col gap-1">
               {LAYOUTS.map((l) => (
                 <button
@@ -935,7 +977,7 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
                   onClick={() => setLayoutId(l.id)}
                   className={
                     'rounded border px-2 py-1.5 text-left text-xs ' +
-                    (layoutId === l.id
+                    (slide.layoutId === l.id
                       ? 'border-indigo-500 bg-indigo-950 text-neutral-100'
                       : 'border-neutral-700 text-neutral-400 hover:text-neutral-200')
                   }
@@ -944,24 +986,24 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
                 </button>
               ))}
             </div>
-            <Row label={`Scale ${theme.layout.deviceScale.toFixed(2)}`}>
+            <Row label={`Scale ${slide.layout.deviceScale.toFixed(2)}`}>
               <input
                 type="range"
                 min={0.4}
                 max={1.2}
                 step={0.01}
-                value={theme.layout.deviceScale}
+                value={slide.layout.deviceScale}
                 onChange={(e) => patchLayout({ deviceScale: Number(e.target.value) })}
                 className="w-36"
               />
             </Row>
-            <Row label={`Offset Y ${theme.layout.deviceOffsetY}`}>
+            <Row label={`Offset Y ${slide.layout.deviceOffsetY}`}>
               <input
                 type="range"
                 min={-600}
                 max={600}
                 step={4}
-                value={theme.layout.deviceOffsetY}
+                value={slide.layout.deviceOffsetY}
                 onChange={(e) => patchLayout({ deviceOffsetY: Number(e.target.value) })}
                 className="w-36"
               />
@@ -1173,10 +1215,10 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
                     size={size}
                     setBlockH={setBlockH}
                     cssH={rowSlideH}
-                    selected={s.id === currentSlideId}
+                    selected={selectedSet.has(s.id)}
                     fontsReady={fontsReady}
                     imageVersion={imagesVersion}
-                    onSelect={() => selectSlide(s.id)}
+                    onSelect={(e) => selectFromClick(e, s.id)}
                   />
                 ))}
               </div>
@@ -1202,10 +1244,10 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
             theme={theme}
             size={size}
             setBlockH={setBlockH}
-            selected={s.id === currentSlideId}
+            selected={selectedSet.has(s.id)}
             fontsReady={fontsReady}
             imageVersion={imagesVersion}
-            onSelect={() => selectSlide(s.id)}
+            onSelect={(e) => selectFromClick(e, s.id)}
             onDelete={() => deleteSlide(s.id)}
             onReorder={reorderSlide}
           />

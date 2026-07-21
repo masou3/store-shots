@@ -8,6 +8,33 @@ export type StoreSize = {
 
 export type FontFamilyId = 'inter' | 'system' | 'serif' | 'mono';
 
+export type LayoutId = 'top-text-crop' | 'top-text-float' | 'bottom-text-crop' | 'angled';
+
+// Per-slide layout: text position and every device dial. Lives on the Slide,
+// not the Theme, so each screen can carry its own layout while gradient, type,
+// grain and frame stay set-wide. The set-wide text zone (measureSetTextZone)
+// is unaffected — it measures text metrics only, never these fields.
+export type SlideLayout = {
+  textPosition: 'top' | 'bottom';
+  textInsetPct: number;
+  // 'slot': height-driven — deviceFill of the rect left after the text zone
+  //         (float and angled layouts).
+  // 'bleed': width-driven — deviceWidthPct of the canvas, positioned by
+  //          deviceBleed hanging past the edge opposite the text (crop
+  //          layouts). The slot plays no part; the only fit constraint is
+  //          collision with the text zone.
+  deviceSizing: 'slot' | 'bleed';
+  deviceFill: number; // slot mode: device height as a fraction of the slot
+  deviceAnchor: 'top' | 'center' | 'bottom'; // slot mode: which slot edge the device pins to
+  deviceBleed: number; // bleed mode: fraction of device height hanging past the anchored edge
+  deviceWidthPct: number; // bleed mode: device width as a fraction of canvas width (capped)
+  deviceShadow: boolean;
+  deviceScale: number; // 0.4 .. 1.2
+  deviceOffsetY: number; // px in store space, allows bleed off the edge
+  deviceRotation: number; // -15 .. 15 degrees
+  imageFit: 'cover' | 'contain'; // cover centre-crops (the normal case), contain letterboxes
+};
+
 export type Theme = {
   sizeId: string;
   frameId: string;
@@ -30,26 +57,6 @@ export type Theme = {
     lineHeight: number;
     maxWidthPct: number;
   };
-  layout: {
-    textPosition: 'top' | 'bottom';
-    textInsetPct: number;
-    // 'slot': height-driven — deviceFill of the rect left after the text zone
-    //         (float and angled layouts).
-    // 'bleed': width-driven — deviceWidthPct of the canvas, positioned by
-    //          deviceBleed hanging past the edge opposite the text (crop
-    //          layouts). The slot plays no part; the only fit constraint is
-    //          collision with the text zone.
-    deviceSizing: 'slot' | 'bleed';
-    deviceFill: number; // slot mode: device height as a fraction of the slot
-    deviceAnchor: 'top' | 'center' | 'bottom'; // slot mode: which slot edge the device pins to
-    deviceBleed: number; // bleed mode: fraction of device height hanging past the anchored edge
-    deviceWidthPct: number; // bleed mode: device width as a fraction of canvas width (capped)
-    deviceShadow: boolean;
-    deviceScale: number; // 0.4 .. 1.2
-    deviceOffsetY: number; // px in store space, allows bleed off the edge
-    deviceRotation: number; // -15 .. 15 degrees
-    imageFit: 'cover' | 'contain'; // cover centre-crops (the normal case), contain letterboxes
-  };
 };
 
 export type Slide = {
@@ -57,6 +64,8 @@ export type Slide = {
   headline: string;
   subhead?: string;
   imageKey?: string;
+  layout: SlideLayout;
+  layoutId: LayoutId; // the preset this slide's layout was last applied from
 };
 
 export type Project = {

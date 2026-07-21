@@ -1,6 +1,23 @@
-import type { Theme } from './types';
+import type { LayoutId, SlideLayout } from './types';
 
-export type LayoutId = 'top-text-crop' | 'top-text-float' | 'bottom-text-crop' | 'angled';
+export type { LayoutId } from './types';
+
+// Device-dial defaults that presets do NOT touch (textInsetPct, deviceScale,
+// deviceOffsetY, imageFit). A new slide's layout is this seeded with a preset.
+export const BASE_SLIDE_LAYOUT: SlideLayout = {
+  textPosition: 'top',
+  textInsetPct: 8,
+  deviceSizing: 'slot',
+  deviceFill: 0.9,
+  deviceAnchor: 'center',
+  deviceBleed: 0.2,
+  deviceWidthPct: 0.84,
+  deviceShadow: true,
+  deviceScale: 1,
+  deviceOffsetY: 0,
+  deviceRotation: 0,
+  imageFit: 'cover',
+};
 
 export type LayoutPreset = {
   id: LayoutId;
@@ -79,21 +96,23 @@ export function getLayout(id: LayoutId): LayoutPreset {
   return l;
 }
 
-// deviceScale and deviceOffsetY are user dials on top of the preset; they are
-// deliberately left untouched here.
-export function applyLayout(theme: Theme, preset: LayoutPreset): Theme {
+// deviceScale, deviceOffsetY, textInsetPct and imageFit are user dials on top
+// of the preset; they are deliberately left untouched here.
+export function applyLayout(layout: SlideLayout, preset: LayoutPreset): SlideLayout {
   return {
-    ...theme,
-    layout: {
-      ...theme.layout,
-      textPosition: preset.textPosition,
-      deviceSizing: preset.sizing,
-      deviceFill: preset.fill,
-      deviceAnchor: preset.anchor,
-      deviceBleed: preset.bleed,
-      deviceWidthPct: preset.widthPct,
-      deviceShadow: preset.shadow,
-      deviceRotation: preset.rotate,
-    },
+    ...layout,
+    textPosition: preset.textPosition,
+    deviceSizing: preset.sizing,
+    deviceFill: preset.fill,
+    deviceAnchor: preset.anchor,
+    deviceBleed: preset.bleed,
+    deviceWidthPct: preset.widthPct,
+    deviceShadow: preset.shadow,
+    deviceRotation: preset.rotate,
   };
+}
+
+// A fresh slide layout: the base dials seeded with a preset.
+export function slideLayoutFor(id: LayoutId): SlideLayout {
+  return applyLayout(BASE_SLIDE_LAYOUT, getLayout(id));
 }

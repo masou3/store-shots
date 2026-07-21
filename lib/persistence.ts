@@ -1,5 +1,6 @@
-import type { Slide, Theme } from './types';
+import type { Slide, SlideLayout, Theme } from './types';
 import type { LayoutId } from './layouts';
+import { BASE_SLIDE_LAYOUT } from './layouts';
 import { STORE_KINDS, capFor, storeKindForSizeId, type StoreKind } from './storeKinds';
 import { getImageBlob, saveImageAs } from './imageStore';
 
@@ -8,14 +9,50 @@ import { getImageBlob, saveImageAs } from './imageStore';
 const LS_PROJECT = 'storeshots:project';
 
 // Everything that was "project-level" before the two-store split — one per set.
+// Layout is per-slide (on Slide), not here.
 export type SetState = {
   theme: Theme;
-  layoutId: LayoutId;
   slides: Slide[];
   currentSlideId: string;
   sizeId: string; // preview preset, in this set's store
   exportSizeIds: string[];
 };
+
+// A set as it may sit on disk: pre-per-slide-layout snapshots (and v1 files)
+// carried layout on the theme and a single layoutId on the set, with slides
+// that had no layout of their own. migrateSetLayout lifts those onto slides.
+type LegacyTheme = Theme & { layout?: SlideLayout };
+type LegacySlide = Omit<Slide, 'layout' | 'layoutId'> & Partial<Pick<Slide, 'layout' | 'layoutId'>>;
+type LegacySet = {
+  theme: LegacyTheme;
+  layoutId?: LayoutId;
+  slides: LegacySlide[];
+  currentSlideId: string;
+  sizeId: string;
+  exportSizeIds: string[];
+};
+
+// Idempotent: slides that already carry a layout are left alone; the rest
+// inherit the legacy set-wide layout (theme.layout + set.layoutId), and the
+// dead theme.layout is stripped.
+function migrateSetLayout(raw: LegacySet): SetState {
+  const fallbackLayout = raw.theme.layout ?? BASE_SLIDE_LAYOUT;
+  const fallbackLayoutId = raw.layoutId ?? 'top-text-crop';
+  const slides: Slide[] = raw.slides.map((sl) =>
+    sl.layout && sl.layoutId
+      ? (sl as Slide)
+      : { ...sl, layout: sl.layout ?? fallbackLayout, layoutId: sl.layoutId ?? fallbackLayoutId },
+  );
+  const theme = { ...raw.theme };
+  delete theme.layout;
+  return {
+    theme,
+    slides,
+    currentSlideId: raw.currentSlideId,
+    sizeId: raw.sizeId,
+    exportSizeIds: raw.exportSizeIds,
+  };
+}
 
 export type ProjectSnapshot = {
   activeStore: StoreKind | null;
@@ -33,8 +70,8 @@ export type ProjectFile = ProjectSnapshot & {
 // A v1 file/snapshot was a single project-level object (pre-store-split).
 type V1Shape = {
   version?: 1;
-  theme: Theme;
-  slides: Slide[];
+  theme: LegacyTheme;
+  slides: LegacySlide[];
   currentSlideId?: string;
   sizeId?: string;
   layoutId?: LayoutId;
@@ -66,20 +103,18 @@ function clampSetToCap(s: SetState, kind: StoreKind): SetState {
 function migrateV1(v1: V1Shape): ProjectSnapshot {
   const sizeId = v1.sizeId ?? 'ios-6.9';
   const kind = storeKindForSizeId(sizeId);
-  const setState: SetState = clampSetToCap(
-    {
-      theme: v1.theme,
-      layoutId: v1.layoutId ?? 'top-text-crop',
-      slides: v1.slides,
-      currentSlideId:
-        v1.currentSlideId && v1.slides.some((s) => s.id === v1.currentSlideId)
-          ? v1.currentSlideId
-          : v1.slides[0].id,
-      sizeId,
-      exportSizeIds: v1.exportSizeIds ?? [STORE_KINDS[kind].defaultSizeId],
-    },
-    kind,
-  );
+  const raw: LegacySet = {
+    theme: v1.theme,
+    layoutId: v1.layoutId,
+    slides: v1.slides,
+    currentSlideId:
+      v1.currentSlideId && v1.slides.some((s) => s.id === v1.currentSlideId)
+        ? v1.currentSlideId
+        : v1.slides[0].id,
+    sizeId,
+    exportSizeIds: v1.exportSizeIds ?? [STORE_KINDS[kind].defaultSizeId],
+  };
+  const setState = clampSetToCap(migrateSetLayout(raw), kind);
   return { activeStore: kind, sets: { [kind]: setState }, exportFormat: v1.exportFormat ?? 'png' };
 }
 
@@ -90,7 +125,7 @@ function normalizeSnapshot(o: unknown): ProjectSnapshot | null {
   const sets: Partial<Record<StoreKind, SetState>> = {};
   for (const kind of Object.keys(x.sets ?? {}) as StoreKind[]) {
     const s = x.sets[kind];
-    if (s) sets[kind] = clampSetToCap(s, kind);
+    if (s) sets[kind] = clampSetToCap(migrateSetLayout(s as unknown as LegacySet), kind);
   }
   return {
     activeStore: x.activeStore ?? null,

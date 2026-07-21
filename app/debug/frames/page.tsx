@@ -1,10 +1,10 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import type { DeviceSpec, Slide, StoreSize, Theme } from '@/lib/types';
+import type { DeviceSpec, Slide, SlideLayout, StoreSize, Theme } from '@/lib/types';
 import { getSize } from '@/lib/sizes';
 import { getSpec } from '@/lib/deviceSpecs';
-import { LAYOUTS, applyLayout, type LayoutPreset } from '@/lib/layouts';
+import { BASE_SLIDE_LAYOUT, LAYOUTS, applyLayout, type LayoutPreset } from '@/lib/layouts';
 import { renderSlide } from '@/lib/render';
 import { loadRenderFonts } from '@/lib/fonts';
 import { setBitmap } from '@/lib/images';
@@ -33,35 +33,14 @@ const BASE_THEME: Theme = {
     lineHeight: 1.1,
     maxWidthPct: 80,
   },
-  layout: {
-    textPosition: 'top',
-    textInsetPct: 8,
-    deviceSizing: 'slot',
-    deviceFill: 0.9,
-    deviceAnchor: 'center',
-    deviceBleed: 0.2,
-    deviceWidthPct: 0.84,
-    deviceShadow: true,
-    deviceScale: 1,
-    deviceOffsetY: 0,
-    deviceRotation: 0,
-    imageFit: 'cover',
-  },
 };
 
-function makeTheme(
-  frameId: string,
-  sizeId: string,
-  imageFit: 'cover' | 'contain',
-  preset: LayoutPreset,
-): Theme {
-  const base: Theme = {
-    ...BASE_THEME,
-    sizeId,
-    frameId,
-    layout: { ...BASE_THEME.layout, imageFit },
-  };
-  return applyLayout(base, preset);
+function makeTheme(frameId: string, sizeId: string): Theme {
+  return { ...BASE_THEME, sizeId, frameId };
+}
+
+function makeLayout(imageFit: 'cover' | 'contain', preset: LayoutPreset): SlideLayout {
+  return applyLayout({ ...BASE_SLIDE_LAYOUT, imageFit }, preset);
 }
 
 function testPatternKey(specId: string): string {
@@ -127,12 +106,14 @@ function FramePreview({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const theme = makeTheme(frameId, size.id, imageFit, preset);
+    const theme = makeTheme(frameId, size.id);
     const slide: Slide = {
       id: `debug-${frameId}-${preset.id}`,
       headline: 'Track every rep.',
       subhead: 'Sets, reps and PRs logged in one tap.',
       imageKey: imageKey ?? undefined,
+      layout: makeLayout(imageFit, preset),
+      layoutId: preset.id,
     };
     renderSlide(ctx, slide, theme, size, canvas.width / size.width);
   }, [frameId, size, preset, imageKey, imageFit, fontsReady]);

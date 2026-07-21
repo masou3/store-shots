@@ -1,4 +1,4 @@
-import type { Ctx2D, DeviceSpec, Slide, StoreSize, Theme } from './types';
+import type { Ctx2D, DeviceSpec, Slide, SlideLayout, StoreSize, Theme } from './types';
 import { getSpec } from './deviceSpecs';
 import { fillLinearGradient } from './gradient';
 import { drawGrain } from './grain';
@@ -96,15 +96,16 @@ export function renderSlide(
 
   // Layout first: the text zone is measured, and the device slot is whatever
   // rect is left. Device height comes from the slot, never from canvas width.
+  const layout = slide.layout;
   const text = layoutText(ctx, slide, theme, w);
-  const insetY = h * (theme.layout.textInsetPct / 100);
+  const insetY = h * (layout.textInsetPct / 100);
   const gap = h * TEXT_DEVICE_GAP_PCT;
   const zoneH = insetY + (opts.setBlockH ?? text.blockH) + gap;
-  const slotTop = theme.layout.textPosition === 'top' ? zoneH : 0;
-  const slotBottom = theme.layout.textPosition === 'top' ? h : h - zoneH;
-  const blockTop = theme.layout.textPosition === 'top' ? insetY : h - insetY - text.blockH;
+  const slotTop = layout.textPosition === 'top' ? zoneH : 0;
+  const slotBottom = layout.textPosition === 'top' ? h : h - zoneH;
+  const blockTop = layout.textPosition === 'top' ? insetY : h - insetY - text.blockH;
   const bmp = slide.imageKey ? getBitmap(slide.imageKey) : null;
-  const geo = deviceGeometry(theme, size, slotTop, slotBottom, bmp ? bmp.width / bmp.height : null);
+  const geo = deviceGeometry(theme, layout, size, slotTop, slotBottom, bmp ? bmp.width / bmp.height : null);
 
   if (theme.gradient.mode === 'solid') {
     ctx.fillStyle = theme.gradient.from;
@@ -123,7 +124,7 @@ export function renderSlide(
     );
   }
   drawTextBlock(ctx, text, theme, w, blockTop);
-  drawDevice(ctx, bmp, theme, geo, scale);
+  drawDevice(ctx, bmp, theme, layout, geo, scale);
   drawGrain(ctx, w, h, theme.grain);
 
   ctx.restore();
@@ -186,6 +187,7 @@ function layoutText(ctx: Ctx2D, slide: Slide, theme: Theme, w: number): TextLayo
 // deviceScale and deviceOffsetY apply on top of both.
 function deviceGeometry(
   theme: Theme,
+  layout: SlideLayout,
   size: StoreSize,
   slotTop: number,
   slotBottom: number,
@@ -205,7 +207,7 @@ function deviceGeometry(
   const kW = 1 + 2 * b; // outerW = screenW * kW
   const bodyAspect = kW / kH; // outerW = outerH * bodyAspect
 
-  const theta = (Math.abs(theme.layout.deviceRotation) * Math.PI) / 180;
+  const theta = (Math.abs(layout.deviceRotation) * Math.PI) / 180;
   const sin = Math.sin(theta);
   const cos = Math.cos(theta);
   // Rotated bounding box of the body, per unit of outerH.
@@ -216,31 +218,31 @@ function deviceGeometry(
   let outerH: number;
   let cy: number;
 
-  if (theme.layout.deviceSizing === 'bleed') {
-    const reqW = Math.min(theme.layout.deviceWidthPct * theme.layout.deviceScale, DEVICE_MAX_WIDTH_PCT) * w;
+  if (layout.deviceSizing === 'bleed') {
+    const reqW = Math.min(layout.deviceWidthPct * layout.deviceScale, DEVICE_MAX_WIDTH_PCT) * w;
     outerH = reqW / bboxWFactor;
-    const bleed = theme.layout.deviceBleed;
+    const bleed = layout.deviceBleed;
     // Visible height above (below) the bled edge must clear the text zone.
-    const available = theme.layout.textPosition === 'top' ? h - slotTop : slotBottom;
+    const available = layout.textPosition === 'top' ? h - slotTop : slotBottom;
     if ((1 - bleed) * outerH * bboxHFactor > available) {
       outerH = available / (1 - bleed) / bboxHFactor;
     }
     const bboxH = outerH * bboxHFactor;
     cy =
-      theme.layout.textPosition === 'top'
+      layout.textPosition === 'top'
         ? h + bleed * bboxH - bboxH / 2
         : -bleed * bboxH + bboxH / 2;
   } else {
     const slotH = slotBottom - slotTop;
-    outerH = (slotH * theme.layout.deviceFill * theme.layout.deviceScale) / bboxHFactor;
+    outerH = (slotH * layout.deviceFill * layout.deviceScale) / bboxHFactor;
     if (outerH * bboxWFactor > maxW) {
       outerH = maxW / bboxWFactor;
     }
     const bboxH = outerH * bboxHFactor;
     cy =
-      theme.layout.deviceAnchor === 'top'
+      layout.deviceAnchor === 'top'
         ? slotTop + bboxH / 2
-        : theme.layout.deviceAnchor === 'bottom'
+        : layout.deviceAnchor === 'bottom'
           ? slotBottom - bboxH / 2
           : (slotTop + slotBottom) / 2;
   }
@@ -249,7 +251,7 @@ function deviceGeometry(
   return {
     spec,
     cx: w / 2,
-    cy: cy + theme.layout.deviceOffsetY,
+    cy: cy + layout.deviceOffsetY,
     outerW: outerH * bodyAspect,
     outerH,
     screenW,
@@ -307,6 +309,7 @@ function drawDevice(
   ctx: Ctx2D,
   bmp: ImageBitmap | null,
   theme: Theme,
+  layout: SlideLayout,
   geo: DeviceGeometry,
   scale: number,
 ): void {
@@ -314,7 +317,7 @@ function drawDevice(
 
   ctx.save();
   ctx.translate(geo.cx, geo.cy);
-  ctx.rotate((theme.layout.deviceRotation * Math.PI) / 180);
+  ctx.rotate((layout.deviceRotation * Math.PI) / 180);
 
   const outerRadius = spec.outerRadiusPct * outerW;
   if (spec.id !== 'none') {
@@ -322,7 +325,7 @@ function drawDevice(
     ctx.beginPath();
     ctx.roundRect(-outerW / 2, -outerH / 2, outerW, outerH, outerRadius);
     ctx.fillStyle = theme.frameColour ?? spec.body.fill;
-    if (theme.layout.deviceShadow) {
+    if (layout.deviceShadow) {
       ctx.save();
       ctx.shadowColor = DEVICE_SHADOW_COLOUR;
       // Canvas shadow blur/offset are in device space, NOT transformed by the
@@ -339,7 +342,7 @@ function drawDevice(
 
   // Screen: clip, fit the screenshot, cover centre-crops the overflow.
   const screenRadius = spec.screenRadiusPct * screenW;
-  if (spec.id === 'none' && theme.layout.deviceShadow) {
+  if (spec.id === 'none' && layout.deviceShadow) {
     // Frameless: the screenshot rect itself carries the shadow.
     ctx.save();
     ctx.shadowColor = DEVICE_SHADOW_COLOUR;
@@ -359,7 +362,7 @@ function drawDevice(
   ctx.fillRect(-screenW / 2, -screenH / 2, screenW, screenH);
   if (bmp) {
     const s =
-      theme.layout.imageFit === 'contain'
+      layout.imageFit === 'contain'
         ? Math.min(screenW / bmp.width, screenH / bmp.height)
         : Math.max(screenW / bmp.width, screenH / bmp.height);
     const dw = bmp.width * s;

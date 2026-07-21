@@ -1,6 +1,6 @@
 import { create } from 'zustand';
-import type { Slide, Theme } from './types';
-import { applyLayout, getLayout, type LayoutId } from './layouts';
+import type { Slide, SlideLayout, Theme } from './types';
+import { applyLayout, getLayout, slideLayoutFor, type LayoutId } from './layouts';
 import { clearAllImages, ensureBitmap, getImageBlob, removeImage, saveImage } from './imageStore';
 import { STORE_KINDS, capFor, otherStore, type StoreKind } from './storeKinds';
 import {
@@ -23,40 +23,44 @@ const BASE_THEME: Omit<Theme, 'sizeId' | 'frameId' | 'lastFrameId'> = {
     lineHeight: 1.1,
     maxWidthPct: 80,
   },
-  layout: {
-    textPosition: 'top',
-    textInsetPct: 8,
-    deviceSizing: 'slot',
-    deviceFill: 0.9,
-    deviceAnchor: 'center',
-    deviceBleed: 0.2,
-    deviceWidthPct: 0.84,
-    deviceShadow: true,
-    deviceScale: 1,
-    deviceOffsetY: 0,
-    deviceRotation: 0,
-    imageFit: 'cover',
-  },
 };
 
 const DEFAULT_LAYOUT: LayoutId = 'top-text-crop';
 
+// New slides carry their own layout. `partial` may override it (e.g. inherit
+// the current slide's layout on insert); otherwise it seeds from DEFAULT.
 function newSlide(partial?: Partial<Slide>): Slide {
-  return { id: crypto.randomUUID(), headline: '', ...partial };
+  return {
+    id: crypto.randomUUID(),
+    headline: '',
+    layout: slideLayoutFor(DEFAULT_LAYOUT),
+    layoutId: DEFAULT_LAYOUT,
+    ...partial,
+  };
+}
+
+// The layout a slide inserted next to `anchorId` should inherit — the anchor's
+// own, so adding a screen keeps the layout you were just looking at.
+function inheritLayout(slides: Slide[], anchorId: string): Pick<Slide, 'layout' | 'layoutId'> {
+  const anchor = slides.find((s) => s.id === anchorId);
+  return anchor
+    ? { layout: anchor.layout, layoutId: anchor.layoutId }
+    : { layout: slideLayoutFor(DEFAULT_LAYOUT), layoutId: DEFAULT_LAYOUT };
 }
 
 export function defaultSet(kind: StoreKind, seedText = false): SetState {
   const cfg = STORE_KINDS[kind];
-  const theme: Theme = applyLayout(
-    { ...BASE_THEME, sizeId: cfg.defaultSizeId, frameId: cfg.defaultFrameId, lastFrameId: cfg.defaultFrameId },
-    getLayout(DEFAULT_LAYOUT),
-  );
+  const theme: Theme = {
+    ...BASE_THEME,
+    sizeId: cfg.defaultSizeId,
+    frameId: cfg.defaultFrameId,
+    lastFrameId: cfg.defaultFrameId,
+  };
   const first = seedText
     ? newSlide({ headline: 'Track every rep.', subhead: 'Sets, reps and PRs logged in one tap.' })
     : newSlide();
   return {
     theme,
-    layoutId: DEFAULT_LAYOUT,
     slides: [first],
     currentSlideId: first.id,
     sizeId: cfg.defaultSizeId,
@@ -80,6 +84,10 @@ function decodeAllSets(sets: Partial<Record<StoreKind, SetState>>, done: () => v
 type StoreState = {
   activeStore: StoreKind | null; // null = the gate (no set chosen yet)
   sets: Partial<Record<StoreKind, SetState>>;
+  // Ephemeral multi-selection of slides in the active set. Never persisted;
+  // empty means "just the current slide" (see targetIds). Layout/device edits
+  // apply to every slide in this set.
+  selectedIds: string[];
   exportFormat: 'png' | 'jpeg';
   imagesVersion: number;
   hydrated: boolean;
@@ -90,13 +98,16 @@ type StoreState = {
   cloneToOther: () => Promise<void>;
 
   setSizeId: (id: string) => void;
-  setLayoutId: (id: LayoutId) => void;
+  setLayoutId: (id: LayoutId) => void; // applies the preset to the selected slides
   patchTheme: (p: Partial<Theme>) => void;
   patchGradient: (p: Partial<Theme['gradient']>) => void;
   patchText: (p: Partial<Theme['text']>) => void;
-  patchLayout: (p: Partial<Theme['layout']>) => void;
+  patchLayout: (p: Partial<SlideLayout>) => void; // patches the selected slides' layout
   patchSlide: (id: string, p: Partial<Slide>) => void;
-  selectSlide: (id: string) => void;
+  selectSlide: (id: string) => void; // single-select + make current
+  toggleSlideSelection: (id: string) => void; // cmd/ctrl-click
+  selectRange: (id: string) => void; // shift-click from the current anchor
+  selectAllSlides: () => void;
   addSlide: () => void;
   deleteSlide: (id: string) => void;
   reorderSlide: (from: number, to: number) => void;
@@ -120,9 +131,17 @@ export const useStore = create<StoreState>((set, get) => {
       return { sets: { ...state.sets, [kind]: { ...cur, ...fn(cur) } } };
     });
 
+  // The slides a layout/device edit targets: the multi-selection, or the
+  // current slide alone when nothing is explicitly selected.
+  const targetIds = (s: SetState): string[] => {
+    const sel = get().selectedIds;
+    return sel.length ? sel : [s.currentSlideId];
+  };
+
   return {
     activeStore: null,
     sets: {},
+    selectedIds: [],
     exportFormat: 'png',
     imagesVersion: 0,
     hydrated: false,
@@ -130,10 +149,15 @@ export const useStore = create<StoreState>((set, get) => {
 
     chooseStore: (kind) =>
       set((state) => {
-        if (state.sets[kind]) return { activeStore: kind };
-        return { activeStore: kind, sets: { ...state.sets, [kind]: defaultSet(kind, true) } };
+        if (state.sets[kind]) return { activeStore: kind, selectedIds: [] };
+        return {
+          activeStore: kind,
+          selectedIds: [],
+          sets: { ...state.sets, [kind]: defaultSet(kind, true) },
+        };
       }),
-    switchStore: (kind) => set((state) => (state.sets[kind] ? { activeStore: kind } : {})),
+    switchStore: (kind) =>
+      set((state) => (state.sets[kind] ? { activeStore: kind, selectedIds: [] } : {})),
 
     cloneToOther: async () => {
       const state = get();
@@ -163,6 +187,8 @@ export const useStore = create<StoreState>((set, get) => {
         headline: sl.headline,
         subhead: sl.subhead,
         imageKey: sl.imageKey ? keyMap.get(sl.imageKey) : undefined,
+        layout: sl.layout,
+        layoutId: sl.layoutId,
       }));
       // Swap device to the target's (keep 'none' — valid in both stores).
       const frameId = src.theme.frameId === 'none' ? 'none' : cfg.defaultFrameId;
@@ -174,7 +200,6 @@ export const useStore = create<StoreState>((set, get) => {
       };
       const newSet: SetState = {
         theme,
-        layoutId: src.layoutId,
         slides,
         currentSlideId: slides[0].id,
         sizeId: cfg.defaultSizeId,
@@ -182,14 +207,22 @@ export const useStore = create<StoreState>((set, get) => {
       };
       // Re-clone overwrites: drop the old target's orphaned blobs.
       const oldKeys = state.sets[to]?.slides.map((s) => s.imageKey).filter(Boolean) as string[] | undefined;
-      set((s) => ({ sets: { ...s.sets, [to]: newSet }, activeStore: to }));
+      set((s) => ({ sets: { ...s.sets, [to]: newSet }, activeStore: to, selectedIds: [] }));
       oldKeys?.forEach((k) => void removeImage(k));
       get().bumpImages();
     },
 
     setSizeId: (id) => updateActive((s) => ({ sizeId: id, theme: { ...s.theme, sizeId: id } })),
     setLayoutId: (id) =>
-      updateActive((s) => ({ layoutId: id, theme: applyLayout(s.theme, getLayout(id)) })),
+      updateActive((s) => {
+        const ids = new Set(targetIds(s));
+        const preset = getLayout(id);
+        return {
+          slides: s.slides.map((sl) =>
+            ids.has(sl.id) ? { ...sl, layoutId: id, layout: applyLayout(sl.layout, preset) } : sl,
+          ),
+        };
+      }),
     patchTheme: (p) =>
       updateActive((s) => ({
         theme: {
@@ -204,21 +237,61 @@ export const useStore = create<StoreState>((set, get) => {
     patchText: (p) =>
       updateActive((s) => ({ theme: { ...s.theme, text: { ...s.theme.text, ...p } } })),
     patchLayout: (p) =>
-      updateActive((s) => ({ theme: { ...s.theme, layout: { ...s.theme.layout, ...p } } })),
+      updateActive((s) => {
+        const ids = new Set(targetIds(s));
+        return {
+          slides: s.slides.map((sl) =>
+            ids.has(sl.id) ? { ...sl, layout: { ...sl.layout, ...p } } : sl,
+          ),
+        };
+      }),
     patchSlide: (id, p) =>
       updateActive((s) => ({ slides: s.slides.map((sl) => (sl.id === id ? { ...sl, ...p } : sl)) })),
-    selectSlide: (id) => updateActive(() => ({ currentSlideId: id })),
+    selectSlide: (id) => {
+      updateActive(() => ({ currentSlideId: id }));
+      set({ selectedIds: [id] });
+    },
+    toggleSlideSelection: (id) => {
+      const cur = get();
+      const kind = cur.activeStore;
+      const setState = kind ? cur.sets[kind] : undefined;
+      if (!setState) return;
+      const base = cur.selectedIds.length ? cur.selectedIds : [setState.currentSlideId];
+      const next = base.includes(id) ? base.filter((x) => x !== id) : [...base, id];
+      // Never leave an empty selection; make the toggled slide the new anchor.
+      if (next.length === 0) return;
+      updateActive(() => ({ currentSlideId: id }));
+      set({ selectedIds: next });
+    },
+    selectRange: (id) => {
+      const cur = get();
+      const kind = cur.activeStore;
+      const setState = kind ? cur.sets[kind] : undefined;
+      if (!setState) return;
+      const a = setState.slides.findIndex((sl) => sl.id === setState.currentSlideId);
+      const b = setState.slides.findIndex((sl) => sl.id === id);
+      if (a < 0 || b < 0) return;
+      const [lo, hi] = a <= b ? [a, b] : [b, a];
+      set({ selectedIds: setState.slides.slice(lo, hi + 1).map((sl) => sl.id) });
+    },
+    selectAllSlides: () => {
+      const cur = get();
+      const kind = cur.activeStore;
+      const setState = kind ? cur.sets[kind] : undefined;
+      if (!setState) return;
+      set({ selectedIds: setState.slides.map((sl) => sl.id) });
+    },
     addSlide: () =>
       updateActive((s) => {
         const kind = get().activeStore;
         if (!kind || s.slides.length >= capFor(kind).max) return {};
-        const slide = newSlide();
+        const slide = newSlide(inheritLayout(s.slides, s.currentSlideId));
         const idx = s.slides.findIndex((sl) => sl.id === s.currentSlideId);
         const slides = [...s.slides];
         slides.splice(idx + 1, 0, slide);
         return { slides, currentSlideId: slide.id };
       }),
-    deleteSlide: (id) =>
+    deleteSlide: (id) => {
       updateActive((s) => {
         const victim = s.slides.find((sl) => sl.id === id);
         if (victim?.imageKey) void removeImage(victim.imageKey);
@@ -229,7 +302,10 @@ export const useStore = create<StoreState>((set, get) => {
             ? slides[Math.min(s.slides.findIndex((sl) => sl.id === id), slides.length - 1)].id
             : s.currentSlideId;
         return { slides, currentSlideId };
-      }),
+      });
+      // Drop the deleted slide from any live selection.
+      set((st) => ({ selectedIds: st.selectedIds.filter((x) => x !== id) }));
+    },
     reorderSlide: (from, to) =>
       updateActive((s) => {
         if (from === to || from < 0 || from >= s.slides.length) return {};
@@ -253,6 +329,7 @@ export const useStore = create<StoreState>((set, get) => {
       const replaced: string[] = [];
       updateActive((s) => {
         const slides = [...s.slides];
+        const inherited = inheritLayout(s.slides, s.currentSlideId);
         const start = Math.max(0, slides.findIndex((sl) => sl.id === s.currentSlideId));
         keys.forEach((key, i) => {
           const idx = start + i;
@@ -260,7 +337,7 @@ export const useStore = create<StoreState>((set, get) => {
             if (slides[idx].imageKey) replaced.push(slides[idx].imageKey!);
             slides[idx] = { ...slides[idx], imageKey: key };
           } else {
-            slides.push(newSlide({ imageKey: key }));
+            slides.push(newSlide({ imageKey: key, ...inherited }));
           }
         });
         return { slides };
@@ -281,7 +358,7 @@ export const useStore = create<StoreState>((set, get) => {
       }
     },
     replaceProject: (snap) => {
-      set({ ...snap });
+      set({ ...snap, selectedIds: [] });
       decodeAllSets(snap.sets, () => get().bumpImages());
       get().bumpImages();
     },
@@ -295,6 +372,7 @@ export const useStore = create<StoreState>((set, get) => {
         set((s) => ({
           activeStore: null,
           sets: {},
+          selectedIds: [],
           exportFormat: 'png',
           persistSuspended: false,
           imagesVersion: s.imagesVersion + 1,

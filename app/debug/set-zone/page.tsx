@@ -1,9 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import type { Slide, Theme } from '@/lib/types';
+import type { Slide, SlideLayout, Theme } from '@/lib/types';
 import { getSize } from '@/lib/sizes';
-import { getLayout, applyLayout } from '@/lib/layouts';
+import { slideLayoutFor } from '@/lib/layouts';
 import { loadRenderFonts } from '@/lib/fonts';
 import { measureSetTextZone, renderSlide } from '@/lib/render';
 
@@ -18,40 +18,27 @@ const HEADLINES = [
   'Progress you can actually see, week after week, without ever touching a spreadsheet.',
 ];
 
-const THEME: Theme = applyLayout(
-  {
-    sizeId: '',
-    frameId: 'iphone-17-pro',
-    lastFrameId: 'iphone-17-pro',
-    frameColour: null,
-    gradient: { mode: 'gradient', from: '#4f46e5', to: '#ec4899', angle: 160, continuous: false },
-    grain: 0.06,
-    text: {
-      family: 'inter',
-      sizePct: 9,
-      weight: 800,
-      colour: '#ffffff',
-      align: 'center',
-      lineHeight: 1.1,
-      maxWidthPct: 80,
-    },
-    layout: {
-      textPosition: 'top',
-      textInsetPct: 8,
-      deviceSizing: 'slot',
-      deviceFill: 0.9,
-      deviceAnchor: 'center',
-      deviceBleed: 0.2,
-      deviceWidthPct: 0.84,
-      deviceShadow: true,
-      deviceScale: 1,
-      deviceOffsetY: 0,
-      deviceRotation: 0,
-      imageFit: 'cover',
-    },
+const THEME: Theme = {
+  sizeId: '',
+  frameId: 'iphone-17-pro',
+  lastFrameId: 'iphone-17-pro',
+  frameColour: null,
+  gradient: { mode: 'gradient', from: '#4f46e5', to: '#ec4899', angle: 160, continuous: false },
+  grain: 0.06,
+  text: {
+    family: 'inter',
+    sizePct: 9,
+    weight: 800,
+    colour: '#ffffff',
+    align: 'center',
+    lineHeight: 1.1,
+    maxWidthPct: 80,
   },
-  getLayout('top-text-crop'),
-);
+};
+
+// One shared layout across the set — the whole point of this assertion is that
+// devices land identically given a single layout and varying headline length.
+const LAYOUT: SlideLayout = slideLayoutFor('top-text-crop');
 
 type Measurement = {
   sizeId: string;
@@ -106,6 +93,8 @@ export default function SetZoneDebugPage() {
         id: `set-zone-${i}`,
         headline: h,
         subhead: i === 0 ? 'Sets, reps and PRs logged in one tap.' : undefined,
+        layout: LAYOUT,
+        layoutId: 'top-text-crop',
       }));
       const out: Measurement[] = [];
       for (const sizeId of ['ios-6.9', 'play-phone']) {
