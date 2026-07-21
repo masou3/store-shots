@@ -33,6 +33,22 @@ export type SlideLayout = {
   deviceOffsetY: number; // px in store space, allows bleed off the edge
   deviceRotation: number; // -15 .. 15 degrees
   imageFit: 'cover' | 'contain'; // cover centre-crops (the normal case), contain letterboxes
+  // Hero span: fraction of the device's bounding box that hangs past the right
+  // edge into the NEXT frame. 0 = off. The next frame redraws this device on
+  // its left edge (see RenderOpts.spillPrev), so the two exported PNGs line up
+  // side-by-side in the store listing.
+  overlapNext?: number;
+  // Coloured halo behind the device. glowStrength 0 = off; glowColour is the
+  // halo colour. Rendered as a blurred, zero-offset shadow of the device body.
+  glowStrength?: number; // 0 .. 1
+  glowColour?: string;
+};
+
+// A full-frame photo behind the device, replacing the gradient for that slide.
+export type SlideBackground = {
+  imageKey: string; // key into the same IndexedDB image store as screenshots
+  blur: number; // 0..~0.025, fraction of canvas width used as blur radius
+  darken: number; // 0..~0.8, opacity of a black overlay for text legibility
 };
 
 export type Theme = {
@@ -63,7 +79,8 @@ export type Slide = {
   id: string;
   headline: string;
   subhead?: string;
-  imageKey?: string;
+  imageKey?: string; // the screenshot shown ON the device screen
+  bg?: SlideBackground; // optional full-frame photo BEHIND the device
   layout: SlideLayout;
   layoutId: LayoutId; // the preset this slide's layout was last applied from
 };

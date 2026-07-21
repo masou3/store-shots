@@ -14,7 +14,7 @@ import {
 import { exportAllZip, type ExportProgress, type ExportSet } from '@/lib/bulkExport';
 import { DEVICE_SPECS } from '@/lib/deviceSpecs';
 import { LAYOUTS } from '@/lib/layouts';
-import { GRADIENT_PRESETS } from '@/lib/presets';
+import { GRADIENT_PACKS } from '@/lib/presets';
 import { FONT_FAMILIES, loadRenderFonts } from '@/lib/fonts';
 import { copyWarning } from '@/lib/copyWarning';
 import { renderSlide, drawSafeAreaOverlay, measureSetTextZone } from '@/lib/render';
@@ -64,6 +64,7 @@ function Thumb({
   theme,
   size,
   setBlockH,
+  spillPrev,
   selected,
   fontsReady,
   imageVersion,
@@ -77,6 +78,7 @@ function Thumb({
   theme: Theme;
   size: StoreSize;
   setBlockH: number;
+  spillPrev?: Slide;
   selected: boolean;
   fontsReady: boolean;
   imageVersion: number;
@@ -104,8 +106,9 @@ function Thumb({
       setBlockH,
       slideIndex: index,
       slideCount,
+      spillPrev,
     });
-  }, [slide, index, slideCount, theme, size, setBlockH, fontsReady, imageVersion]);
+  }, [slide, index, slideCount, theme, size, setBlockH, spillPrev, fontsReady, imageVersion]);
 
   return (
     <div
@@ -162,6 +165,7 @@ function RowSlide({
   theme,
   size,
   setBlockH,
+  spillPrev,
   cssH,
   selected,
   fontsReady,
@@ -174,6 +178,7 @@ function RowSlide({
   theme: Theme;
   size: StoreSize;
   setBlockH: number;
+  spillPrev?: Slide;
   cssH: number;
   selected: boolean;
   fontsReady: boolean;
@@ -199,8 +204,9 @@ function RowSlide({
       setBlockH,
       slideIndex: index,
       slideCount,
+      spillPrev,
     });
-  }, [slide, index, slideCount, theme, size, setBlockH, cssH, fontsReady, imageVersion]);
+  }, [slide, index, slideCount, theme, size, setBlockH, spillPrev, cssH, fontsReady, imageVersion]);
 
   return (
     <div
@@ -350,6 +356,9 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
     patchText,
     patchLayout,
     patchSlide,
+    setBackgroundImage,
+    clearBackgroundImage,
+    patchBackground,
     selectSlide,
     toggleSlideSelection,
     selectRange,
@@ -434,6 +443,21 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
     input.click();
   }, [importFiles]);
 
+  // Background photo picker: one image, saved then set on the selected slides.
+  const pickBackgroundImage = useCallback(() => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/png,image/jpeg';
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file || !/^image\/(png|jpeg)$/.test(file.type)) return;
+      const key = await saveImage(file);
+      setBackgroundImage(key);
+      bumpImages();
+    };
+    input.click();
+  }, [setBackgroundImage, bumpImages]);
+
   const dropProps = {
     onDrop: (e: DragEvent) => {
       if (e.dataTransfer.types.includes('application/x-slide-index')) return;
@@ -460,10 +484,12 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     const scale = canvas.width / size.width;
+    const prev = currentIndex > 0 ? slides[currentIndex - 1] : undefined;
     renderSlide(ctx, slide, theme, size, scale, {
       setBlockH,
       slideIndex: currentIndex,
       slideCount: slides.length,
+      spillPrev: prev?.layout.overlapNext ? prev : undefined,
     });
     if (showSafeArea) drawSafeAreaOverlay(ctx, size, scale);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -502,10 +528,12 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
     setExporting(true);
     setError(null);
     try {
+      const prev = currentIndex > 0 ? slides[currentIndex - 1] : undefined;
       const blob = await exportSlidePng(slide, theme, size, {
         setBlockH,
         slideIndex: currentIndex,
         slideCount: slides.length,
+        spillPrev: prev?.layout.overlapNext ? prev : undefined,
       });
       downloadBlob(blob, `storeshots-${size.id}.png`);
     } catch (e) {
@@ -873,19 +901,82 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
                   />
                   Continuous across set
                 </label>
-                <div className="mt-1 flex flex-wrap gap-1.5">
-                  {GRADIENT_PRESETS.map((p) => (
-                    <button
-                      key={p.from + p.to}
-                      title={`${p.from} → ${p.to}`}
-                      onClick={() => patchGradient({ mode: 'gradient', from: p.from, to: p.to })}
-                      className="h-6 w-9 rounded border border-neutral-700"
-                      style={{ background: `linear-gradient(135deg, ${p.from}, ${p.to})` }}
-                    />
+                <div className="mt-1 flex flex-col gap-2">
+                  {GRADIENT_PACKS.map((pack) => (
+                    <div key={pack.label}>
+                      <div className="mb-1 text-[10px] uppercase tracking-wide text-neutral-500">
+                        {pack.label}
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {pack.presets.map((p) => (
+                          <button
+                            key={p.from + p.to}
+                            title={`${p.from} → ${p.to}`}
+                            onClick={() =>
+                              patchGradient({
+                                mode: 'gradient',
+                                from: p.from,
+                                to: p.to,
+                                ...(p.angle !== undefined ? { angle: p.angle } : {}),
+                              })
+                            }
+                            className="h-6 w-9 rounded border border-neutral-700 hover:border-neutral-400"
+                            style={{ background: `linear-gradient(135deg, ${p.from}, ${p.to})` }}
+                          />
+                        ))}
+                      </div>
+                    </div>
                   ))}
                 </div>
               </>
             )}
+            <div className="mt-1 border-t border-neutral-800 pt-2">
+              <div className="mb-1 flex items-center justify-between">
+                <span className="text-[10px] uppercase tracking-wide text-neutral-500">
+                  Photo {targetCount > 1 ? `· ${targetCount} screens` : ''}
+                </span>
+                {slide.bg && (
+                  <button
+                    onClick={clearBackgroundImage}
+                    className="text-[11px] text-neutral-500 underline hover:text-neutral-300"
+                  >
+                    remove
+                  </button>
+                )}
+              </div>
+              <button
+                onClick={pickBackgroundImage}
+                className="w-full rounded border border-neutral-700 px-2 py-1.5 text-xs text-neutral-300 hover:border-neutral-500"
+              >
+                {slide.bg ? 'Replace background photo' : 'Add background photo'}
+              </button>
+              {slide.bg && (
+                <>
+                  <Row label={`Blur ${(slide.bg.blur * 100).toFixed(1)}`}>
+                    <input
+                      type="range"
+                      min={0}
+                      max={0.025}
+                      step={0.001}
+                      value={slide.bg.blur}
+                      onChange={(e) => patchBackground({ blur: Number(e.target.value) })}
+                      className="w-36"
+                    />
+                  </Row>
+                  <Row label={`Darken ${(slide.bg.darken * 100).toFixed(0)}%`}>
+                    <input
+                      type="range"
+                      min={0}
+                      max={0.85}
+                      step={0.02}
+                      value={slide.bg.darken}
+                      onChange={(e) => patchBackground({ darken: Number(e.target.value) })}
+                      className="w-36"
+                    />
+                  </Row>
+                </>
+              )}
+            </div>
             <Row label={`Grain ${theme.grain.toFixed(3)}`}>
               <input
                 type="range"
@@ -1007,6 +1098,37 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
                 onChange={(e) => patchLayout({ deviceOffsetY: Number(e.target.value) })}
                 className="w-36"
               />
+            </Row>
+            <Row label={`Overlap next ${Math.round((slide.layout.overlapNext ?? 0) * 100)}%`}>
+              <input
+                type="range"
+                min={0}
+                max={0.5}
+                step={0.01}
+                value={slide.layout.overlapNext ?? 0}
+                onChange={(e) => patchLayout({ overlapNext: Number(e.target.value) })}
+                className="w-36"
+                title="Push the phone off the right edge so it continues onto the next frame"
+              />
+            </Row>
+            <Row label={`Glow ${Math.round((slide.layout.glowStrength ?? 0) * 100)}%`}>
+              <span className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.02}
+                  value={slide.layout.glowStrength ?? 0}
+                  onChange={(e) => patchLayout({ glowStrength: Number(e.target.value) })}
+                  className="w-28"
+                />
+                <input
+                  type="color"
+                  value={slide.layout.glowColour ?? '#7c3aed'}
+                  onChange={(e) => patchLayout({ glowColour: e.target.value })}
+                  title="Glow colour"
+                />
+              </span>
             </Row>
           </Section>
 
@@ -1214,6 +1336,7 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
                     theme={theme}
                     size={size}
                     setBlockH={setBlockH}
+                    spillPrev={i > 0 && slides[i - 1].layout.overlapNext ? slides[i - 1] : undefined}
                     cssH={rowSlideH}
                     selected={selectedSet.has(s.id)}
                     fontsReady={fontsReady}
@@ -1244,6 +1367,7 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
             theme={theme}
             size={size}
             setBlockH={setBlockH}
+            spillPrev={i > 0 && slides[i - 1].layout.overlapNext ? slides[i - 1] : undefined}
             selected={selectedSet.has(s.id)}
             fontsReady={fontsReady}
             imageVersion={imagesVersion}

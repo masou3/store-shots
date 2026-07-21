@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Slide, SlideLayout, Theme } from './types';
+import type { Slide, SlideBackground, SlideLayout, Theme } from './types';
 import { applyLayout, getLayout, slideLayoutFor, type LayoutId } from './layouts';
 import { clearAllImages, ensureBitmap, getImageBlob, removeImage, saveImage } from './imageStore';
 import { STORE_KINDS, capFor, otherStore, type StoreKind } from './storeKinds';
@@ -69,11 +69,28 @@ export function defaultSet(kind: StoreKind, seedText = false): SetState {
 }
 
 function decodeSlideImages(slides: Slide[], done: () => void): void {
-  const keys = slides.map((s) => s.imageKey).filter((k): k is string => Boolean(k));
+  const keys = slides
+    .flatMap((s) => [s.imageKey, s.bg?.imageKey])
+    .filter((k): k is string => Boolean(k));
   if (keys.length === 0) return;
   // A key with no blob keeps its slide's text and renders an empty screen —
   // ensureBitmap resolves false, nothing throws.
   Promise.all(keys.map((k) => ensureBitmap(k))).then(done);
+}
+
+// Delete image blobs that no longer appear as any slide's screenshot or
+// background. Background photos can be shared across slides (one upload applied
+// to several), so a replaced/deleted key must be reference-checked, unlike the
+// 1:1 screenshot keys.
+function removeOrphanImages(candidates: Array<string | undefined>, slides: Slide[]): void {
+  const used = new Set<string>();
+  for (const sl of slides) {
+    if (sl.imageKey) used.add(sl.imageKey);
+    if (sl.bg?.imageKey) used.add(sl.bg.imageKey);
+  }
+  for (const k of candidates) {
+    if (k && !used.has(k)) void removeImage(k);
+  }
 }
 
 function decodeAllSets(sets: Partial<Record<StoreKind, SetState>>, done: () => void): void {
@@ -104,6 +121,9 @@ type StoreState = {
   patchText: (p: Partial<Theme['text']>) => void;
   patchLayout: (p: Partial<SlideLayout>) => void; // patches the selected slides' layout
   patchSlide: (id: string, p: Partial<Slide>) => void;
+  setBackgroundImage: (key: string) => void; // sets a bg photo on the selected slides
+  clearBackgroundImage: () => void; // removes the bg photo from the selected slides
+  patchBackground: (p: Partial<Omit<SlideBackground, 'imageKey'>>) => void; // blur / darken
   selectSlide: (id: string) => void; // single-select + make current
   toggleSlideSelection: (id: string) => void; // cmd/ctrl-click
   selectRange: (id: string) => void; // shift-click from the current anchor
@@ -175,11 +195,14 @@ export const useStore = create<StoreState>((set, get) => {
       const kept = src.slides.slice(0, capFor(to).max);
 
       // Duplicate images under NEW keys — two independent sets, no shared blob.
+      // Both the screenshot and the background photo count.
       const keyMap = new Map<string, string>();
       for (const sl of kept) {
-        if (sl.imageKey && !keyMap.has(sl.imageKey)) {
-          const blob = await getImageBlob(sl.imageKey);
-          if (blob) keyMap.set(sl.imageKey, await saveImage(blob));
+        for (const src of [sl.imageKey, sl.bg?.imageKey]) {
+          if (src && !keyMap.has(src)) {
+            const blob = await getImageBlob(src);
+            if (blob) keyMap.set(src, await saveImage(blob));
+          }
         }
       }
       const slides: Slide[] = kept.map((sl) => ({
@@ -187,6 +210,10 @@ export const useStore = create<StoreState>((set, get) => {
         headline: sl.headline,
         subhead: sl.subhead,
         imageKey: sl.imageKey ? keyMap.get(sl.imageKey) : undefined,
+        bg:
+          sl.bg && keyMap.has(sl.bg.imageKey)
+            ? { ...sl.bg, imageKey: keyMap.get(sl.bg.imageKey)! }
+            : undefined,
         layout: sl.layout,
         layoutId: sl.layoutId,
       }));
@@ -205,8 +232,11 @@ export const useStore = create<StoreState>((set, get) => {
         sizeId: cfg.defaultSizeId,
         exportSizeIds: [cfg.defaultSizeId],
       };
-      // Re-clone overwrites: drop the old target's orphaned blobs.
-      const oldKeys = state.sets[to]?.slides.map((s) => s.imageKey).filter(Boolean) as string[] | undefined;
+      // Re-clone overwrites: drop the old target's orphaned blobs (screenshots
+      // and background photos).
+      const oldKeys = state.sets[to]?.slides
+        .flatMap((s) => [s.imageKey, s.bg?.imageKey])
+        .filter(Boolean) as string[] | undefined;
       set((s) => ({ sets: { ...s.sets, [to]: newSet }, activeStore: to, selectedIds: [] }));
       oldKeys?.forEach((k) => void removeImage(k));
       get().bumpImages();
@@ -247,6 +277,47 @@ export const useStore = create<StoreState>((set, get) => {
       }),
     patchSlide: (id, p) =>
       updateActive((s) => ({ slides: s.slides.map((sl) => (sl.id === id ? { ...sl, ...p } : sl)) })),
+    setBackgroundImage: (key) => {
+      const replaced: string[] = [];
+      updateActive((s) => {
+        const ids = new Set(targetIds(s));
+        return {
+          slides: s.slides.map((sl) => {
+            if (!ids.has(sl.id)) return sl;
+            if (sl.bg?.imageKey && sl.bg.imageKey !== key) replaced.push(sl.bg.imageKey);
+            return { ...sl, bg: { imageKey: key, blur: sl.bg?.blur ?? 0, darken: sl.bg?.darken ?? 0 } };
+          }),
+        };
+      });
+      const kind = get().activeStore;
+      removeOrphanImages(replaced, (kind && get().sets[kind]?.slides) || []);
+    },
+    clearBackgroundImage: () => {
+      const removed: string[] = [];
+      updateActive((s) => {
+        const ids = new Set(targetIds(s));
+        return {
+          slides: s.slides.map((sl) => {
+            if (!ids.has(sl.id) || !sl.bg) return sl;
+            removed.push(sl.bg.imageKey);
+            const next = { ...sl };
+            delete next.bg;
+            return next;
+          }),
+        };
+      });
+      const kind = get().activeStore;
+      removeOrphanImages(removed, (kind && get().sets[kind]?.slides) || []);
+    },
+    patchBackground: (p) =>
+      updateActive((s) => {
+        const ids = new Set(targetIds(s));
+        return {
+          slides: s.slides.map((sl) =>
+            ids.has(sl.id) && sl.bg ? { ...sl, bg: { ...sl.bg, ...p } } : sl,
+          ),
+        };
+      }),
     selectSlide: (id) => {
       updateActive(() => ({ currentSlideId: id }));
       set({ selectedIds: [id] });
@@ -292,9 +363,11 @@ export const useStore = create<StoreState>((set, get) => {
         return { slides, currentSlideId: slide.id };
       }),
     deleteSlide: (id) => {
+      let victimBg: string | undefined;
       updateActive((s) => {
         const victim = s.slides.find((sl) => sl.id === id);
         if (victim?.imageKey) void removeImage(victim.imageKey);
+        victimBg = victim?.bg?.imageKey;
         let slides = s.slides.filter((sl) => sl.id !== id);
         if (slides.length === 0) slides = [newSlide()];
         const currentSlideId =
@@ -305,6 +378,9 @@ export const useStore = create<StoreState>((set, get) => {
       });
       // Drop the deleted slide from any live selection.
       set((st) => ({ selectedIds: st.selectedIds.filter((x) => x !== id) }));
+      // The bg photo may be shared with another slide — only drop it if orphaned.
+      const kind = get().activeStore;
+      removeOrphanImages([victimBg], (kind && get().sets[kind]?.slides) || []);
     },
     reorderSlide: (from, to) =>
       updateActive((s) => {

@@ -164,9 +164,12 @@ function allSlides(snap: ProjectSnapshot): Slide[] {
 export async function buildProjectFile(snap: ProjectSnapshot): Promise<ProjectFile> {
   const images: Record<string, string> = {};
   for (const s of allSlides(snap)) {
-    if (!s.imageKey || images[s.imageKey]) continue;
-    const blob = await getImageBlob(s.imageKey);
-    if (blob) images[s.imageKey] = await blobToDataUrl(blob);
+    // Both the screenshot and the background photo, deduped by key.
+    for (const key of [s.imageKey, s.bg?.imageKey]) {
+      if (!key || images[key]) continue;
+      const blob = await getImageBlob(key);
+      if (blob) images[key] = await blobToDataUrl(blob);
+    }
   }
   return { version: 2, ...snap, images };
 }

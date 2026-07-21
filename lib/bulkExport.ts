@@ -74,10 +74,12 @@ export async function exportAllZip(
       const canvas = new OffscreenCanvas(size.width, size.height);
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('Could not get 2d context for export');
+      const prev = si > 0 ? set.slides[si - 1] : undefined;
       renderSlide(ctx, slide, set.theme, size, 1, {
         setBlockH,
         slideIndex: si,
         slideCount: set.slides.length,
+        spillPrev: prev?.layout.overlapNext ? prev : undefined,
       });
 
       // Per image, not once: silent dimension drift is the failure mode that

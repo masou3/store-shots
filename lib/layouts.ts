@@ -17,6 +17,9 @@ export const BASE_SLIDE_LAYOUT: SlideLayout = {
   deviceOffsetY: 0,
   deviceRotation: 0,
   imageFit: 'cover',
+  overlapNext: 0,
+  glowStrength: 0,
+  glowColour: '#7c3aed',
 };
 
 export type LayoutPreset = {

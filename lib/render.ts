@@ -42,6 +42,7 @@ type DeviceGeometry = {
   outerH: number;
   screenW: number;
   screenH: number;
+  bboxW: number; // width of the rotated bounding box, for hero-span positioning
 };
 
 let scratch: Ctx2D | null = null;
@@ -76,7 +77,50 @@ export type RenderOpts = {
   // slice. Omitted = slice 0 of 1.
   slideIndex?: number;
   slideCount?: number;
+  // The previous slide, when IT has overlapNext set: its device is redrawn on
+  // this frame's left edge so a hero phone reads as continuous across the two
+  // frames when shown side-by-side.
+  spillPrev?: Slide;
 };
+
+type SlideGeom = {
+  layout: SlideLayout;
+  text: TextLayout;
+  blockTop: number;
+  geo: DeviceGeometry;
+  bmp: ImageBitmap | null;
+};
+
+// The geometry half of renderSlide, factored out so the hero-span spill can
+// recompute the neighbouring slide's device identically. cx already carries the
+// overlap offset that pushes a hero device past the right edge.
+function computeSlideGeom(
+  ctx: Ctx2D,
+  slide: Slide,
+  theme: Theme,
+  size: StoreSize,
+  setBlockH?: number,
+): SlideGeom {
+  const w = size.width;
+  const h = size.height;
+  const layout = slide.layout;
+  const text = layoutText(ctx, slide, theme, w);
+  const insetY = h * (layout.textInsetPct / 100);
+  const gap = h * TEXT_DEVICE_GAP_PCT;
+  const zoneH = insetY + (setBlockH ?? text.blockH) + gap;
+  const slotTop = layout.textPosition === 'top' ? zoneH : 0;
+  const slotBottom = layout.textPosition === 'top' ? h : h - zoneH;
+  const blockTop = layout.textPosition === 'top' ? insetY : h - insetY - text.blockH;
+  const bmp = slide.imageKey ? getBitmap(slide.imageKey) : null;
+  const geo = deviceGeometry(theme, layout, size, slotTop, slotBottom, bmp ? bmp.width / bmp.height : null);
+  const overlap = layout.overlapNext ?? 0;
+  if (overlap > 0) {
+    // Right edge lands at w + overlap*bboxW, so that fraction hangs into the
+    // next frame; the next frame draws the same device at cx - w.
+    geo.cx = w + overlap * geo.bboxW - geo.bboxW / 2;
+  }
+  return { layout, text, blockTop, geo, bmp };
+}
 
 // The one render function. Preview, row, thumbnails and export all call this
 // and nothing else. Every draw call below is in full store coordinate space;
@@ -96,16 +140,63 @@ export function renderSlide(
 
   // Layout first: the text zone is measured, and the device slot is whatever
   // rect is left. Device height comes from the slot, never from canvas width.
-  const layout = slide.layout;
-  const text = layoutText(ctx, slide, theme, w);
-  const insetY = h * (layout.textInsetPct / 100);
-  const gap = h * TEXT_DEVICE_GAP_PCT;
-  const zoneH = insetY + (opts.setBlockH ?? text.blockH) + gap;
-  const slotTop = layout.textPosition === 'top' ? zoneH : 0;
-  const slotBottom = layout.textPosition === 'top' ? h : h - zoneH;
-  const blockTop = layout.textPosition === 'top' ? insetY : h - insetY - text.blockH;
-  const bmp = slide.imageKey ? getBitmap(slide.imageKey) : null;
-  const geo = deviceGeometry(theme, layout, size, slotTop, slotBottom, bmp ? bmp.width / bmp.height : null);
+  const cur = computeSlideGeom(ctx, slide, theme, size, opts.setBlockH);
+
+  drawBackground(ctx, slide, theme, w, h, scale, opts);
+
+  // Hero span: a previous slide whose device overflows into this frame gets
+  // redrawn here first, so this frame's own text and device sit on top of it.
+  if (opts.spillPrev) {
+    const prev = computeSlideGeom(ctx, opts.spillPrev, theme, size, opts.setBlockH);
+    drawDevice(ctx, prev.bmp, theme, prev.layout, { ...prev.geo, cx: prev.geo.cx - w }, scale);
+  }
+
+  drawTextBlock(ctx, cur.text, theme, w, cur.blockTop);
+  drawDevice(ctx, cur.bmp, theme, cur.layout, cur.geo, scale);
+  drawGrain(ctx, w, h, theme.grain);
+
+  ctx.restore();
+}
+
+// Background is a per-slide photo when set, otherwise the theme gradient/solid.
+// The photo is cover-fit, optionally blurred and darkened for text legibility.
+function drawBackground(
+  ctx: Ctx2D,
+  slide: Slide,
+  theme: Theme,
+  w: number,
+  h: number,
+  scale: number,
+  opts: RenderOpts,
+): void {
+  const bg = slide.bg;
+  const bmp = bg?.imageKey ? getBitmap(bg.imageKey) : null;
+  if (bg && bmp) {
+    // A solid base first so a partially-loaded / letterboxed photo never leaves
+    // the canvas transparent (both stores reject alpha).
+    ctx.fillStyle = theme.gradient.mode === 'solid' ? theme.gradient.from : '#000000';
+    ctx.fillRect(0, 0, w, h);
+
+    const blurStore = (bg.blur ?? 0) * w; // blur radius in store px
+    ctx.save();
+    // Canvas filter blur is in device px (not scaled by the CTM), same quirk as
+    // the device shadow — apply scale by hand so preview and export match.
+    if (blurStore > 0) ctx.filter = `blur(${blurStore * scale}px)`;
+    const s = Math.max(w / bmp.width, h / bmp.height);
+    const dw = bmp.width * s;
+    const dh = bmp.height * s;
+    // Overscan by the blur radius so the softened edge never reveals the canvas.
+    const over = blurStore * 2;
+    ctx.drawImage(bmp, (w - dw) / 2 - over, (h - dh) / 2 - over, dw + over * 2, dh + over * 2);
+    ctx.restore();
+
+    const d = bg.darken ?? 0;
+    if (d > 0) {
+      ctx.fillStyle = `rgba(0,0,0,${d})`;
+      ctx.fillRect(0, 0, w, h);
+    }
+    return;
+  }
 
   if (theme.gradient.mode === 'solid') {
     ctx.fillStyle = theme.gradient.from;
@@ -123,11 +214,6 @@ export function renderSlide(
       continuous ? (opts.slideCount ?? 1) : 1,
     );
   }
-  drawTextBlock(ctx, text, theme, w, blockTop);
-  drawDevice(ctx, bmp, theme, layout, geo, scale);
-  drawGrain(ctx, w, h, theme.grain);
-
-  ctx.restore();
 }
 
 function layoutText(ctx: Ctx2D, slide: Slide, theme: Theme, w: number): TextLayout {
@@ -256,6 +342,7 @@ function deviceGeometry(
     outerH,
     screenW,
     screenH: screenW / screenAspect,
+    bboxW: outerH * bboxWFactor,
   };
 }
 
@@ -320,6 +407,27 @@ function drawDevice(
   ctx.rotate((layout.deviceRotation * Math.PI) / 180);
 
   const outerRadius = spec.outerRadiusPct * outerW;
+
+  // Coloured glow: a blurred, zero-offset shadow of the device silhouette,
+  // drawn first so the body (or the screenshot, when frameless) covers the
+  // solid fill and only the halo shows. Two passes so it reads at strength.
+  const glow = layout.glowStrength ?? 0;
+  if (glow > 0) {
+    const glowW = spec.id === 'none' ? screenW : outerW;
+    const glowH = spec.id === 'none' ? screenH : outerH;
+    const glowR = spec.id === 'none' ? spec.screenRadiusPct * screenW : outerRadius;
+    const colour = layout.glowColour ?? '#7c3aed';
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(-glowW / 2, -glowH / 2, glowW, glowH, glowR);
+    ctx.fillStyle = colour;
+    ctx.shadowColor = colour;
+    ctx.shadowBlur = glowW * 0.3 * glow * scale; // device-px, scale by hand like the shadow
+    ctx.fill();
+    ctx.fill();
+    ctx.restore();
+  }
+
   if (spec.id !== 'none') {
     drawButtons(ctx, spec, outerW, outerH);
     ctx.beginPath();
