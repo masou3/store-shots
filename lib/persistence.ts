@@ -163,13 +163,19 @@ function allSlides(snap: ProjectSnapshot): Slide[] {
 
 export async function buildProjectFile(snap: ProjectSnapshot): Promise<ProjectFile> {
   const images: Record<string, string> = {};
+  const inline = async (key: string | undefined) => {
+    if (!key || images[key]) return;
+    const blob = await getImageBlob(key);
+    if (blob) images[key] = await blobToDataUrl(blob);
+  };
+  // Screenshots and per-slide background photos, deduped by key.
   for (const s of allSlides(snap)) {
-    // Both the screenshot and the background photo, deduped by key.
-    for (const key of [s.imageKey, s.bg?.imageKey]) {
-      if (!key || images[key]) continue;
-      const blob = await getImageBlob(key);
-      if (blob) images[key] = await blobToDataUrl(blob);
-    }
+    await inline(s.imageKey);
+    await inline(s.bg?.imageKey);
+  }
+  // Each set's set-wide panorama photo.
+  for (const set of Object.values(snap.sets)) {
+    await inline(set?.theme.panorama?.imageKey);
   }
   return { version: 2, ...snap, images };
 }

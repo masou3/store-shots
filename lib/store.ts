@@ -97,8 +97,17 @@ function removeOrphanImages(candidates: Array<string | undefined>, slides: Slide
 }
 
 function decodeAllSets(sets: Partial<Record<StoreKind, SetState>>, done: () => void): void {
-  const all = Object.values(sets).flatMap((s) => (s ? s.slides : []));
-  decodeSlideImages(all, done);
+  const keys = new Set<string>();
+  for (const s of Object.values(sets)) {
+    if (!s) continue;
+    for (const sl of s.slides) {
+      if (sl.imageKey) keys.add(sl.imageKey);
+      if (sl.bg?.imageKey) keys.add(sl.bg.imageKey);
+    }
+    if (s.theme.panorama?.imageKey) keys.add(s.theme.panorama.imageKey);
+  }
+  if (keys.size === 0) return;
+  Promise.all([...keys].map((k) => ensureBitmap(k))).then(done);
 }
 
 type StoreState = {
@@ -130,6 +139,9 @@ type StoreState = {
   setBackgroundImage: (key: string) => void; // sets a bg photo on the selected slides
   clearBackgroundImage: () => void; // removes the bg photo from the selected slides
   patchBackground: (p: Partial<Omit<SlideBackground, 'imageKey'>>) => void; // blur / darken
+  setPanoramaImage: (key: string) => void; // set-wide photo spanning all screens
+  clearPanorama: () => void;
+  patchPanorama: (p: Partial<Omit<SlideBackground, 'imageKey'>>) => void; // blur / darken
   selectSlide: (id: string) => void; // single-select + make current
   toggleSlideSelection: (id: string) => void; // cmd/ctrl-click
   selectRange: (id: string) => void; // shift-click from the current anchor
@@ -224,10 +236,17 @@ export const useStore = create<StoreState>((set, get) => {
         layout: sl.layout,
         layoutId: sl.layoutId,
       }));
+      // Duplicate the set-wide panorama too, under its own new key.
+      let panorama = src.theme.panorama;
+      if (panorama) {
+        const blob = await getImageBlob(panorama.imageKey);
+        panorama = blob ? { ...panorama, imageKey: await saveImage(blob) } : undefined;
+      }
       // Swap device to the target's (keep 'none' — valid in both stores).
       const frameId = src.theme.frameId === 'none' ? 'none' : cfg.defaultFrameId;
       const theme: Theme = {
         ...src.theme,
+        panorama,
         frameId,
         lastFrameId: cfg.defaultFrameId,
         sizeId: cfg.defaultSizeId,
@@ -239,11 +258,12 @@ export const useStore = create<StoreState>((set, get) => {
         sizeId: cfg.defaultSizeId,
         exportSizeIds: [cfg.defaultSizeId],
       };
-      // Re-clone overwrites: drop the old target's orphaned blobs (screenshots
-      // and background photos).
-      const oldKeys = state.sets[to]?.slides
-        .flatMap((s) => [s.imageKey, s.bg?.imageKey])
-        .filter(Boolean) as string[] | undefined;
+      // Re-clone overwrites: drop the old target's orphaned blobs (screenshots,
+      // background photos and its panorama).
+      const oldKeys = [
+        ...(state.sets[to]?.slides.flatMap((s) => [s.imageKey, s.bg?.imageKey]) ?? []),
+        state.sets[to]?.theme.panorama?.imageKey,
+      ].filter(Boolean) as string[] | undefined;
       set((s) => ({ sets: { ...s.sets, [to]: newSet }, activeStore: to, selectedIds: [] }));
       oldKeys?.forEach((k) => void removeImage(k));
       get().bumpImages();
@@ -360,6 +380,39 @@ export const useStore = create<StoreState>((set, get) => {
           ),
         };
       }),
+    setPanoramaImage: (key) => {
+      const kind = get().activeStore;
+      const prev = kind ? get().sets[kind]?.theme.panorama?.imageKey : undefined;
+      updateActive((s) => ({
+        theme: {
+          ...s.theme,
+          panorama: {
+            imageKey: key,
+            blur: s.theme.panorama?.blur ?? 0,
+            darken: s.theme.panorama?.darken ?? 0,
+          },
+        },
+      }));
+      // The panorama blob is never shared with a slide, so a replaced key is
+      // always safe to drop.
+      if (prev && prev !== key) void removeImage(prev);
+    },
+    clearPanorama: () => {
+      const kind = get().activeStore;
+      const prev = kind ? get().sets[kind]?.theme.panorama?.imageKey : undefined;
+      updateActive((s) => {
+        const theme = { ...s.theme };
+        delete theme.panorama;
+        return { theme };
+      });
+      if (prev) void removeImage(prev);
+    },
+    patchPanorama: (p) =>
+      updateActive((s) =>
+        s.theme.panorama
+          ? { theme: { ...s.theme, panorama: { ...s.theme.panorama, ...p } } }
+          : {},
+      ),
     selectSlide: (id) => {
       updateActive(() => ({ currentSlideId: id }));
       set({ selectedIds: [id] });

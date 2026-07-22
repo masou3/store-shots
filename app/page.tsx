@@ -373,6 +373,9 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
     setBackgroundImage,
     clearBackgroundImage,
     patchBackground,
+    setPanoramaImage,
+    clearPanorama,
+    patchPanorama,
     selectSlide,
     toggleSlideSelection,
     selectRange,
@@ -479,6 +482,21 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
     };
     input.click();
   }, [setBackgroundImage, bumpImages]);
+
+  // Panorama picker: one image spread set-wide across every screen.
+  const pickPanoramaImage = useCallback(() => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/png,image/jpeg';
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file || !/^image\/(png|jpeg)$/.test(file.type)) return;
+      const key = await saveImage(file);
+      setPanoramaImage(key);
+      bumpImages();
+    };
+    input.click();
+  }, [setPanoramaImage, bumpImages]);
 
   const dropProps = {
     onDrop: (e: DragEvent) => {
@@ -1082,6 +1100,57 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
                       step={0.02}
                       value={slide.bg.darken}
                       onChange={(e) => patchBackground({ darken: Number(e.target.value) })}
+                      className="w-36"
+                    />
+                  </Row>
+                </>
+              )}
+            </div>
+            <div className="mt-1 border-t border-neutral-800 pt-2">
+              <div className="mb-1 flex items-center justify-between">
+                <span className="text-[10px] uppercase tracking-wide text-neutral-500">
+                  Panorama · all screens
+                </span>
+                {theme.panorama && (
+                  <button
+                    onClick={clearPanorama}
+                    className="text-[11px] text-neutral-500 underline hover:text-neutral-300"
+                  >
+                    remove
+                  </button>
+                )}
+              </div>
+              <button
+                onClick={pickPanoramaImage}
+                className="w-full rounded border border-neutral-700 px-2 py-1.5 text-xs text-neutral-300 hover:border-neutral-500"
+              >
+                {theme.panorama ? 'Replace panorama photo' : 'Add panorama photo'}
+              </button>
+              {theme.panorama && (
+                <>
+                  <p className="mt-1 text-[11px] leading-snug text-neutral-600">
+                    One photo spread across all {slides.length} screens — each slide shows its
+                    slice. A slide with its own background photo overrides it.
+                  </p>
+                  <Row label={`Blur ${((theme.panorama.blur ?? 0) * 100).toFixed(1)}`}>
+                    <input
+                      type="range"
+                      min={0}
+                      max={0.025}
+                      step={0.001}
+                      value={theme.panorama.blur ?? 0}
+                      onChange={(e) => patchPanorama({ blur: Number(e.target.value) })}
+                      className="w-36"
+                    />
+                  </Row>
+                  <Row label={`Darken ${((theme.panorama.darken ?? 0) * 100).toFixed(0)}%`}>
+                    <input
+                      type="range"
+                      min={0}
+                      max={0.85}
+                      step={0.02}
+                      value={theme.panorama.darken ?? 0}
+                      onChange={(e) => patchPanorama({ darken: Number(e.target.value) })}
                       className="w-36"
                     />
                   </Row>

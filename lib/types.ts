@@ -69,6 +69,10 @@ export type Theme = {
     continuous: boolean; // one gradient across a virtual canvas of width x slideCount, each slide takes its slice
   };
   grain: number; // 0..1, overlay opacity
+  // Set-wide panoramic background: one photo spread across the whole set, each
+  // slide showing its horizontal slice (like gradient.continuous, but a photo).
+  // A slide's own `bg` overrides it for that slide. Same blur/darken as bg.
+  panorama?: SlideBackground;
   text: {
     family: FontFamilyId;
     sizePct: number; // headline size as % of canvas width, so 1320 and 1080 exports match optically

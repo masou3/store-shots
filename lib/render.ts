@@ -239,6 +239,15 @@ function drawBackground(
     return;
   }
 
+  // Set-wide panorama: one photo across the whole set, this slide's slice. The
+  // per-slide bg above wins, so a single slide can still break the panorama.
+  const pano = theme.panorama;
+  const panoBmp = pano?.imageKey ? getBitmap(pano.imageKey) : null;
+  if (pano && panoBmp) {
+    drawPanoramaSlice(ctx, panoBmp, pano, theme, w, h, scale, opts.slideIndex ?? 0, opts.slideCount ?? 1);
+    return;
+  }
+
   if (theme.gradient.mode === 'solid') {
     ctx.fillStyle = theme.gradient.from;
     ctx.fillRect(0, 0, w, h);
@@ -254,6 +263,48 @@ function drawBackground(
       continuous ? (opts.slideIndex ?? 0) : 0,
       continuous ? (opts.slideCount ?? 1) : 1,
     );
+  }
+}
+
+// One slice of a set-wide panorama. The photo is cover-fit to a virtual canvas
+// of width w*count (all slides side-by-side), then this slide draws the whole
+// scaled image shifted left by idx*w so its slice lands in [0,w]. Because every
+// slide uses the identical fit and the same per-slide blur kernel over shared
+// source pixels, the slices line up seamlessly when the exported PNGs are shown
+// in a row. No overscan (it would rescale per slide and break the seam); a solid
+// base fill covers any soft edge at the very outer canvas boundary.
+function drawPanoramaSlice(
+  ctx: Ctx2D,
+  bmp: ImageBitmap,
+  pano: { blur?: number; darken?: number },
+  theme: Theme,
+  w: number,
+  h: number,
+  scale: number,
+  idx: number,
+  count: number,
+): void {
+  const n = Math.max(1, count);
+  ctx.fillStyle = theme.gradient.mode === 'solid' ? theme.gradient.from : '#000000';
+  ctx.fillRect(0, 0, w, h);
+
+  const virtualW = w * n;
+  const s = Math.max(virtualW / bmp.width, h / bmp.height);
+  const dw = bmp.width * s;
+  const dh = bmp.height * s;
+  const originX = (virtualW - dw) / 2 - idx * w;
+  const originY = (h - dh) / 2;
+
+  const blurStore = (pano.blur ?? 0) * w;
+  ctx.save();
+  if (blurStore > 0) ctx.filter = `blur(${blurStore * scale}px)`;
+  ctx.drawImage(bmp, originX, originY, dw, dh);
+  ctx.restore();
+
+  const d = pano.darken ?? 0;
+  if (d > 0) {
+    ctx.fillStyle = `rgba(0,0,0,${d})`;
+    ctx.fillRect(0, 0, w, h);
   }
 }
 
