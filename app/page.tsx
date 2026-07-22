@@ -55,6 +55,51 @@ const inputCls =
   'rounded border border-neutral-700 bg-neutral-900 px-1.5 py-1 text-xs text-neutral-200';
 const selectCls = inputCls + ' w-36';
 
+type Duotone = { shadow: string; highlight: string };
+
+// Shared duotone toggle + colour pickers, used for both the per-slide photo and
+// the panorama. onChange(undefined) turns it off.
+function DuotoneControls({
+  duotone,
+  onChange,
+}: {
+  duotone?: Duotone;
+  onChange: (d: Duotone | undefined) => void;
+}) {
+  return (
+    <>
+      <label className="flex items-center gap-2 text-xs text-neutral-400">
+        <input
+          type="checkbox"
+          checked={!!duotone}
+          onChange={(e) =>
+            onChange(e.target.checked ? (duotone ?? { shadow: '#1e1b4b', highlight: '#fbbf24' }) : undefined)
+          }
+        />
+        Duotone
+      </label>
+      {duotone && (
+        <>
+          <Row label="Shadow">
+            <input
+              type="color"
+              value={duotone.shadow}
+              onChange={(e) => onChange({ ...duotone, shadow: e.target.value })}
+            />
+          </Row>
+          <Row label="Highlight">
+            <input
+              type="color"
+              value={duotone.highlight}
+              onChange={(e) => onChange({ ...duotone, highlight: e.target.value })}
+            />
+          </Row>
+        </>
+      )}
+    </>
+  );
+}
+
 const shortLabel = (id: string) => getSize(id).label.replace(/\s*\(.*\)/, '');
 
 function Thumb({
@@ -1000,88 +1045,142 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
               <select
                 className={selectCls}
                 value={theme.gradient.mode}
-                onChange={(e) =>
-                  patchGradient({ mode: e.target.value as 'gradient' | 'solid' | 'radial' })
-                }
+                onChange={(e) => {
+                  const mode = e.target.value as typeof theme.gradient.mode;
+                  if (mode === 'mesh' && !theme.gradient.mesh) {
+                    patchGradient({ mode, mesh: ['#4f46e5', '#ec4899', '#f97316', '#22d3ee'] });
+                  } else {
+                    patchGradient({ mode });
+                  }
+                }}
               >
                 <option value="gradient">linear gradient</option>
                 <option value="radial">radial glow</option>
+                <option value="conic">conic sweep</option>
+                <option value="mesh">mesh</option>
                 <option value="solid">solid</option>
               </select>
             </Row>
-            <Row
-              label={
-                theme.gradient.mode === 'solid'
-                  ? 'Colour'
-                  : theme.gradient.mode === 'radial'
-                    ? 'Centre'
-                    : 'Colour A'
-              }
-            >
-              <input
-                type="color"
-                value={theme.gradient.from}
-                onChange={(e) => patchGradient({ from: e.target.value })}
-              />
-            </Row>
-            {theme.gradient.mode !== 'solid' && (
+            {theme.gradient.mode === 'mesh' ? (
+              <Row label="Corners">
+                <span className="grid grid-cols-2 gap-1">
+                  {([0, 1, 3, 2] as const).map((i) => {
+                    const mesh = theme.gradient.mesh ?? [
+                      '#4f46e5',
+                      '#ec4899',
+                      '#f97316',
+                      '#22d3ee',
+                    ];
+                    return (
+                      <input
+                        key={i}
+                        type="color"
+                        value={mesh[i]}
+                        onChange={(e) => {
+                          const m = [...mesh] as [string, string, string, string];
+                          m[i] = e.target.value;
+                          patchGradient({ mesh: m });
+                        }}
+                        title={['top-left', 'top-right', 'bottom-right', 'bottom-left'][i]}
+                      />
+                    );
+                  })}
+                </span>
+              </Row>
+            ) : (
               <>
-                <Row label={theme.gradient.mode === 'radial' ? 'Edge' : 'Colour B'}>
+                <Row
+                  label={
+                    theme.gradient.mode === 'solid'
+                      ? 'Colour'
+                      : theme.gradient.mode === 'radial'
+                        ? 'Centre'
+                        : 'Colour A'
+                  }
+                >
                   <input
                     type="color"
-                    value={theme.gradient.to}
-                    onChange={(e) => patchGradient({ to: e.target.value })}
+                    value={theme.gradient.from}
+                    onChange={(e) => patchGradient({ from: e.target.value })}
                   />
                 </Row>
-                {theme.gradient.mode === 'gradient' && (
+                {theme.gradient.mode !== 'solid' && (
                   <>
-                    <Row label={`Angle ${theme.gradient.angle}°`}>
+                    <Row label={theme.gradient.mode === 'radial' ? 'Edge' : 'Colour B'}>
                       <input
-                        type="range"
-                        min={0}
-                        max={360}
-                        step={1}
-                        value={theme.gradient.angle}
-                        onChange={(e) => patchGradient({ angle: Number(e.target.value) })}
-                        className="w-36"
+                        type="color"
+                        value={theme.gradient.to}
+                        onChange={(e) => patchGradient({ to: e.target.value })}
                       />
                     </Row>
-                    <label className="flex items-center gap-2 text-xs text-neutral-400">
-                      <input
-                        type="checkbox"
-                        checked={theme.gradient.continuous}
-                        onChange={(e) => patchGradient({ continuous: e.target.checked })}
-                      />
-                      Continuous across set
-                    </label>
+                    {(theme.gradient.mode === 'gradient' || theme.gradient.mode === 'conic') && (
+                      <Row label={`Angle ${theme.gradient.angle}°`}>
+                        <input
+                          type="range"
+                          min={0}
+                          max={360}
+                          step={1}
+                          value={theme.gradient.angle}
+                          onChange={(e) => patchGradient({ angle: Number(e.target.value) })}
+                          className="w-36"
+                        />
+                      </Row>
+                    )}
+                    {(theme.gradient.mode === 'radial' || theme.gradient.mode === 'conic') && (
+                      <Row label="Origin">
+                        <select
+                          className={selectCls}
+                          value={theme.gradient.origin ?? 'center'}
+                          onChange={(e) =>
+                            patchGradient({
+                              origin: e.target.value as 'center' | 'top' | 'bottom',
+                            })
+                          }
+                        >
+                          <option value="center">center</option>
+                          <option value="top">top</option>
+                          <option value="bottom">bottom</option>
+                        </select>
+                      </Row>
+                    )}
+                    {theme.gradient.mode === 'gradient' && (
+                      <label className="flex items-center gap-2 text-xs text-neutral-400">
+                        <input
+                          type="checkbox"
+                          checked={theme.gradient.continuous}
+                          onChange={(e) => patchGradient({ continuous: e.target.checked })}
+                        />
+                        Continuous across set
+                      </label>
+                    )}
+                    <div className="mt-1 flex flex-col gap-2">
+                      {GRADIENT_PACKS.map((pack) => (
+                        <div key={pack.label}>
+                          <div className="mb-1 text-[10px] uppercase tracking-wide text-neutral-500">
+                            {pack.label}
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {pack.presets.map((p) => (
+                              <button
+                                key={p.from + p.to}
+                                title={`${p.from} → ${p.to}`}
+                                onClick={() =>
+                                  patchGradient({
+                                    from: p.from,
+                                    to: p.to,
+                                    ...(p.angle !== undefined ? { angle: p.angle } : {}),
+                                  })
+                                }
+                                className="h-6 w-9 rounded border border-neutral-700 hover:border-neutral-400"
+                                style={{ background: `linear-gradient(135deg, ${p.from}, ${p.to})` }}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </>
                 )}
-                <div className="mt-1 flex flex-col gap-2">
-                  {GRADIENT_PACKS.map((pack) => (
-                    <div key={pack.label}>
-                      <div className="mb-1 text-[10px] uppercase tracking-wide text-neutral-500">
-                        {pack.label}
-                      </div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {pack.presets.map((p) => (
-                          <button
-                            key={p.from + p.to}
-                            title={`${p.from} → ${p.to}`}
-                            onClick={() =>
-                              patchGradient({
-                                from: p.from,
-                                to: p.to,
-                                ...(p.angle !== undefined ? { angle: p.angle } : {}),
-                              })
-                            }
-                            className="h-6 w-9 rounded border border-neutral-700 hover:border-neutral-400"
-                            style={{ background: `linear-gradient(135deg, ${p.from}, ${p.to})` }}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
               </>
             )}
             <div className="mt-1 border-t border-neutral-800 pt-2">
@@ -1128,6 +1227,10 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
                       className="w-36"
                     />
                   </Row>
+                  <DuotoneControls
+                    duotone={slide.bg.duotone}
+                    onChange={(d) => patchBackground({ duotone: d })}
+                  />
                 </>
               )}
             </div>
@@ -1179,6 +1282,10 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
                       className="w-36"
                     />
                   </Row>
+                  <DuotoneControls
+                    duotone={theme.panorama.duotone}
+                    onChange={(d) => patchPanorama({ duotone: d })}
+                  />
                 </>
               )}
             </div>

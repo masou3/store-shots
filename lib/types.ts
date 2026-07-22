@@ -63,6 +63,9 @@ export type SlideBackground = {
   imageKey: string; // key into the same IndexedDB image store as screenshots
   blur: number; // 0..~0.025, fraction of canvas width used as blur radius
   darken: number; // 0..~0.8, opacity of a black overlay for text legibility
+  // Optional duotone: map the photo's shadows toward `shadow` and highlights
+  // toward `highlight` (multiply + screen passes). Undefined = full colour.
+  duotone?: { shadow: string; highlight: string };
 };
 
 export type PatternKind = 'dots' | 'grid' | 'lines' | 'crosshatch';
@@ -81,13 +84,16 @@ export type Theme = {
   lastFrameId?: string; // last non-'none' frame; 'none' borrows its screen aspect when no image is loaded
   frameColour: string | null; // null = the device spec's own body colour
   gradient: {
-    // 'gradient' = linear (angle + continuous apply); 'radial' = centred glow
-    // from `from` out to `to`; 'solid' = flat `from`.
-    mode: 'gradient' | 'solid' | 'radial';
+    // 'gradient' = linear (angle + continuous apply); 'radial'/'conic' = glow /
+    // sweep from `from`↔`to` around `origin` (angle rotates conic); 'mesh' = the
+    // four `mesh` corner colours blended; 'solid' = flat `from`.
+    mode: 'gradient' | 'solid' | 'radial' | 'conic' | 'mesh';
     from: string;
     to: string;
     angle: number; // degrees, CSS convention; solid uses `from`
     continuous: boolean; // one gradient across a virtual canvas of width x slideCount, each slide takes its slice
+    origin?: 'center' | 'top' | 'bottom'; // radial/conic focal point
+    mesh?: [string, string, string, string]; // mesh mode: TL, TR, BR, BL corner colours
   };
   grain: number; // 0..1, overlay opacity
   // Darkened edges over the background (under the device), 0..~0.8. Focuses the

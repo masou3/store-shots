@@ -1,6 +1,20 @@
-import type { BackgroundPattern, Ctx2D, DeviceSpec, Slide, SlideLayout, StoreSize, Theme } from './types';
+import type {
+  BackgroundPattern,
+  Ctx2D,
+  DeviceSpec,
+  Slide,
+  SlideBackground,
+  SlideLayout,
+  StoreSize,
+  Theme,
+} from './types';
 import { getSpec } from './deviceSpecs';
-import { fillLinearGradient, fillRadialGradient } from './gradient';
+import {
+  fillLinearGradient,
+  fillRadialGradient,
+  fillConicGradient,
+  fillMeshGradient,
+} from './gradient';
 import { drawGrain } from './grain';
 import { wrapRichText, lineWidth, type RichLine } from './text';
 import { resolveFontFamily } from './fonts';
@@ -234,6 +248,8 @@ function drawBackground(
     ctx.drawImage(bmp, (w - dw) / 2 - over, (h - dh) / 2 - over, dw + over * 2, dh + over * 2);
     ctx.restore();
 
+    if (bg.duotone) applyDuotone(ctx, bg.duotone, w, h);
+
     const d = bg.darken ?? 0;
     if (d > 0) {
       ctx.fillStyle = `rgba(0,0,0,${d})`;
@@ -251,13 +267,18 @@ function drawBackground(
     return;
   }
 
-  if (theme.gradient.mode === 'solid') {
-    ctx.fillStyle = theme.gradient.from;
+  const g = theme.gradient;
+  if (g.mode === 'solid') {
+    ctx.fillStyle = g.from;
     ctx.fillRect(0, 0, w, h);
-  } else if (theme.gradient.mode === 'radial') {
-    ctx.fillStyle = theme.gradient.from;
+  } else if (g.mode === 'radial') {
+    ctx.fillStyle = g.from;
     ctx.fillRect(0, 0, w, h);
-    fillRadialGradient(ctx, w, h, theme.gradient.from, theme.gradient.to);
+    fillRadialGradient(ctx, w, h, g.from, g.to, focalY(g.origin, h));
+  } else if (g.mode === 'conic') {
+    fillConicGradient(ctx, w, h, g.from, g.to, g.angle, focalY(g.origin, h));
+  } else if (g.mode === 'mesh') {
+    fillMeshGradient(ctx, w, h, g.mesh ?? [g.from, g.to, g.from, g.to]);
   } else {
     const continuous = theme.gradient.continuous && (opts.slideCount ?? 1) > 1;
     fillLinearGradient(
@@ -283,7 +304,7 @@ function drawBackground(
 function drawPanoramaSlice(
   ctx: Ctx2D,
   bmp: ImageBitmap,
-  pano: { blur?: number; darken?: number },
+  pano: SlideBackground,
   theme: Theme,
   w: number,
   h: number,
@@ -308,11 +329,32 @@ function drawPanoramaSlice(
   ctx.drawImage(bmp, originX, originY, dw, dh);
   ctx.restore();
 
+  if (pano.duotone) applyDuotone(ctx, pano.duotone, w, h);
+
   const d = pano.darken ?? 0;
   if (d > 0) {
     ctx.fillStyle = `rgba(0,0,0,${d})`;
     ctx.fillRect(0, 0, w, h);
   }
+}
+
+// Vertical focal point for radial/conic modes.
+function focalY(origin: 'center' | 'top' | 'bottom' | undefined, h: number): number {
+  return origin === 'top' ? h * 0.28 : origin === 'bottom' ? h * 0.72 : h / 2;
+}
+
+// Stylised duotone over a photo: multiply pushes shadows toward `shadow`, screen
+// lifts highlights toward `highlight`. The photo covers the canvas (cover-fit),
+// so the whole rect is the photo. Composite ops are reset by save/restore.
+function applyDuotone(ctx: Ctx2D, duo: { shadow: string; highlight: string }, w: number, h: number): void {
+  ctx.save();
+  ctx.globalCompositeOperation = 'multiply';
+  ctx.fillStyle = duo.shadow;
+  ctx.fillRect(0, 0, w, h);
+  ctx.globalCompositeOperation = 'screen';
+  ctx.fillStyle = duo.highlight;
+  ctx.fillRect(0, 0, w, h);
+  ctx.restore();
 }
 
 // Darkened edges: transparent at the centre, ramping to black at the corners.
