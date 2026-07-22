@@ -1362,6 +1362,40 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
                 title="Darken the edges to focus on the phone"
               />
             </Row>
+            <Row label={`Edge glow ${Math.round((theme.edgeGlow?.strength ?? 0) * 100)}%`}>
+              <span className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.02}
+                  value={theme.edgeGlow?.strength ?? 0}
+                  onChange={(e) =>
+                    patchTheme({
+                      edgeGlow: {
+                        strength: Number(e.target.value),
+                        colour: theme.edgeGlow?.colour ?? '#22d3ee',
+                      },
+                    })
+                  }
+                  className="w-28"
+                  title="Glowing border framing the whole screenshot"
+                />
+                <input
+                  type="color"
+                  value={theme.edgeGlow?.colour ?? '#22d3ee'}
+                  onChange={(e) =>
+                    patchTheme({
+                      edgeGlow: {
+                        strength: theme.edgeGlow?.strength ?? 0.5,
+                        colour: e.target.value,
+                      },
+                    })
+                  }
+                  title="Edge glow colour"
+                />
+              </span>
+            </Row>
             <Row label="Pattern">
               <select
                 className={selectCls}
@@ -1611,32 +1645,12 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
                 />
               </span>
             </Row>
-            <Row label={`Frame rim ${Math.round((slide.layout.rimStrength ?? 0) * 100)}%`}>
-              <span className="flex items-center gap-2">
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.02}
-                  value={slide.layout.rimStrength ?? 0}
-                  onChange={(e) => patchLayout({ rimStrength: Number(e.target.value) })}
-                  className="w-28"
-                  title="Bright neon outline hugging the frame edge"
-                />
-                <input
-                  type="color"
-                  value={slide.layout.rimColour ?? '#22d3ee'}
-                  onChange={(e) => patchLayout({ rimColour: e.target.value })}
-                  title="Frame rim colour"
-                />
-              </span>
-            </Row>
             <button
               onClick={applyPhoneGlowToAll}
               className="self-start text-[11px] text-neutral-400 underline hover:text-neutral-200"
-              title="Copy this slide's phone glow and frame rim to every slide"
+              title="Copy this slide's phone glow to every slide"
             >
-              Apply glow &amp; rim to all slides
+              Apply phone glow to all slides
             </button>
           </Section>
 

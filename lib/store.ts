@@ -319,15 +319,13 @@ export const useStore = create<StoreState>((set, get) => {
     applyPhoneGlowToAll: () =>
       updateActive((s) => {
         const cur = s.slides.find((sl) => sl.id === s.currentSlideId) ?? s.slides[0];
-        // Broadcast both the halo and the neon rim.
-        const glow = {
-          glowStrength: cur.layout.glowStrength ?? 0,
-          glowColour: cur.layout.glowColour ?? '#7c3aed',
-          rimStrength: cur.layout.rimStrength ?? 0,
-          rimColour: cur.layout.rimColour ?? '#22d3ee',
-        };
+        const glowStrength = cur.layout.glowStrength ?? 0;
+        const glowColour = cur.layout.glowColour ?? '#7c3aed';
         return {
-          slides: s.slides.map((sl) => ({ ...sl, layout: { ...sl.layout, ...glow } })),
+          slides: s.slides.map((sl) => ({
+            ...sl,
+            layout: { ...sl.layout, glowStrength, glowColour },
+          })),
         };
       }),
     patchLayout: (p) =>

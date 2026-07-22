@@ -56,10 +56,6 @@ export type SlideLayout = {
   // halo colour. Rendered as a blurred, zero-offset shadow of the device body.
   glowStrength?: number; // 0 .. 1
   glowColour?: string;
-  // Neon rim: a bright glowing stroke hugging the frame's outer edge (the screen
-  // edge when frameless). Sharper than the diffuse halo above. 0 = off.
-  rimStrength?: number; // 0 .. 1
-  rimColour?: string;
 };
 
 // A full-frame photo behind the device, replacing the gradient for that slide.
@@ -106,6 +102,9 @@ export type Theme = {
   // Tiled geometric texture over the background, under the device. Deterministic
   // so exports stay byte-identical.
   pattern?: BackgroundPattern;
+  // A glowing border framing the whole screenshot edge (over everything,
+  // including text and phone). strength 0 = off; colour is the glow colour.
+  edgeGlow?: { strength: number; colour: string };
   // Set-wide panoramic background: one photo spread across the whole set, each
   // slide showing its horizontal slice (like gradient.continuous, but a photo).
   // A slide's own `bg` overrides it for that slide. Same blur/darken as bg.

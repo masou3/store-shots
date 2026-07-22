@@ -23,8 +23,6 @@ export const BASE_SLIDE_LAYOUT: SlideLayout = {
   overlapNext: 0,
   glowStrength: 0,
   glowColour: '#7c3aed',
-  rimStrength: 0,
-  rimColour: '#22d3ee',
 };
 
 export type LayoutPreset = {

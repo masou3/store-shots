@@ -181,6 +181,8 @@ export function renderSlide(
   drawTextBlock(ctx, cur.text, effTheme, w, cur.blockTop, cur.layout.textOffsetX ?? 0, scale);
   drawDevice(ctx, cur.bmp, theme, cur.layout, cur.geo, scale);
   drawGrain(ctx, w, h, theme.grain);
+  // A glowing border framing the whole slide — over everything, drawn last.
+  if (theme.edgeGlow) drawEdgeGlow(ctx, theme.edgeGlow, w, h, scale);
 
   ctx.restore();
 }
@@ -354,6 +356,33 @@ function applyDuotone(ctx: Ctx2D, duo: { shadow: string; highlight: string }, w:
   ctx.globalCompositeOperation = 'screen';
   ctx.fillStyle = duo.highlight;
   ctx.fillRect(0, 0, w, h);
+  ctx.restore();
+}
+
+// A glowing rounded border just inside the canvas, framing the whole slide.
+// Drawn last (over text + phone). shadowBlur is device-px, so scale by hand;
+// three passes build the glow like the other neon effects.
+function drawEdgeGlow(
+  ctx: Ctx2D,
+  glow: { strength: number; colour: string },
+  w: number,
+  h: number,
+  scale: number,
+): void {
+  if (glow.strength <= 0) return;
+  const m = Math.min(w, h);
+  const inset = m * 0.02;
+  const radius = m * 0.04;
+  ctx.save();
+  ctx.strokeStyle = glow.colour;
+  ctx.shadowColor = glow.colour;
+  ctx.lineWidth = Math.max(2, m * 0.006);
+  ctx.shadowBlur = m * 0.06 * glow.strength * scale;
+  ctx.beginPath();
+  ctx.roundRect(inset, inset, w - 2 * inset, h - 2 * inset, radius);
+  ctx.stroke();
+  ctx.stroke();
+  ctx.stroke();
   ctx.restore();
 }
 
@@ -727,28 +756,6 @@ function drawDevice(
     ctx.strokeStyle = spec.body.edge;
     ctx.lineWidth = spec.body.edgeWidth;
     ctx.stroke();
-  }
-
-  // Neon rim: a bright glowing stroke hugging the outer edge (screen edge when
-  // frameless), drawn last so the glow sits on top of the body. Multiple passes
-  // build the neon intensity; shadowBlur is device-px, so scale it by hand.
-  const rim = layout.rimStrength ?? 0;
-  if (rim > 0) {
-    const rimW = spec.id === 'none' ? screenW : outerW;
-    const rimH = spec.id === 'none' ? screenH : outerH;
-    const rimR = spec.id === 'none' ? spec.screenRadiusPct * screenW : outerRadius;
-    const colour = layout.rimColour ?? '#22d3ee';
-    ctx.save();
-    ctx.strokeStyle = colour;
-    ctx.shadowColor = colour;
-    ctx.lineWidth = Math.max(2, outerW * 0.006);
-    ctx.shadowBlur = outerW * 0.14 * rim * scale;
-    ctx.beginPath();
-    ctx.roundRect(-rimW / 2, -rimH / 2, rimW, rimH, rimR);
-    ctx.stroke();
-    ctx.stroke();
-    ctx.stroke();
-    ctx.restore();
   }
 
   ctx.restore();
