@@ -88,12 +88,22 @@ export type Theme = {
   };
 };
 
+// Per-slide overrides for the text *look* only — never metrics. Colour, accent
+// and glow don't affect wrapping, so each slide can carry its own without
+// disturbing the set-wide text zone (which measures family/size/weight only).
+// Any field left undefined falls back to theme.text. Broadcast the current
+// slide's look to every slide with applyTextStyleToAll.
+export type TextStyleOverride = Partial<
+  Pick<Theme['text'], 'colour' | 'accentColour' | 'glow' | 'glowColour'>
+>;
+
 export type Slide = {
   id: string;
   headline: string;
   subhead?: string;
   imageKey?: string; // the screenshot shown ON the device screen
   bg?: SlideBackground; // optional full-frame photo BEHIND the device
+  textStyle?: TextStyleOverride; // per-slide text colour/accent/glow, over theme.text
   layout: SlideLayout;
   layoutId: LayoutId; // the preset this slide's layout was last applied from
 };

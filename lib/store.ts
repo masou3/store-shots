@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Slide, SlideBackground, SlideLayout, Theme } from './types';
+import type { Slide, SlideBackground, SlideLayout, TextStyleOverride, Theme } from './types';
 import { applyLayout, getLayout, slideLayoutFor, type LayoutId } from './layouts';
 import { clearAllImages, ensureBitmap, getImageBlob, removeImage, saveImage } from './imageStore';
 import { STORE_KINDS, capFor, otherStore, type StoreKind } from './storeKinds';
@@ -121,7 +121,10 @@ type StoreState = {
   setLayoutId: (id: LayoutId) => void; // applies the preset to the selected slides
   patchTheme: (p: Partial<Theme>) => void;
   patchGradient: (p: Partial<Theme['gradient']>) => void;
-  patchText: (p: Partial<Theme['text']>) => void;
+  patchText: (p: Partial<Theme['text']>) => void; // set-wide type metrics (family/size/…)
+  patchTextStyle: (p: Partial<TextStyleOverride>) => void; // per-slide text look on the selected slides
+  applyTextStyleToAll: () => void; // broadcast the current slide's text look to every slide
+  applyPhoneGlowToAll: () => void; // broadcast the current slide's device glow to every slide
   patchLayout: (p: Partial<SlideLayout>) => void; // patches the selected slides' layout
   patchSlide: (id: string, p: Partial<Slide>) => void;
   setBackgroundImage: (key: string) => void; // sets a bg photo on the selected slides
@@ -217,6 +220,7 @@ export const useStore = create<StoreState>((set, get) => {
           sl.bg && keyMap.has(sl.bg.imageKey)
             ? { ...sl.bg, imageKey: keyMap.get(sl.bg.imageKey)! }
             : undefined,
+        textStyle: sl.textStyle,
         layout: sl.layout,
         layoutId: sl.layoutId,
       }));
@@ -269,6 +273,41 @@ export const useStore = create<StoreState>((set, get) => {
       updateActive((s) => ({ theme: { ...s.theme, gradient: { ...s.theme.gradient, ...p } } })),
     patchText: (p) =>
       updateActive((s) => ({ theme: { ...s.theme, text: { ...s.theme.text, ...p } } })),
+    patchTextStyle: (p) =>
+      updateActive((s) => {
+        const ids = new Set(targetIds(s));
+        return {
+          slides: s.slides.map((sl) =>
+            ids.has(sl.id) ? { ...sl, textStyle: { ...sl.textStyle, ...p } } : sl,
+          ),
+        };
+      }),
+    applyTextStyleToAll: () =>
+      updateActive((s) => {
+        const cur = s.slides.find((sl) => sl.id === s.currentSlideId) ?? s.slides[0];
+        const t = s.theme.text;
+        // The current slide's *effective* look (its override, or the set-wide
+        // default), stamped onto every slide so they all match.
+        const look: TextStyleOverride = {
+          colour: cur.textStyle?.colour ?? t.colour,
+          accentColour: cur.textStyle?.accentColour ?? t.accentColour,
+          glow: cur.textStyle?.glow ?? t.glow,
+          glowColour: cur.textStyle?.glowColour ?? t.glowColour,
+        };
+        return { slides: s.slides.map((sl) => ({ ...sl, textStyle: { ...look } })) };
+      }),
+    applyPhoneGlowToAll: () =>
+      updateActive((s) => {
+        const cur = s.slides.find((sl) => sl.id === s.currentSlideId) ?? s.slides[0];
+        const glowStrength = cur.layout.glowStrength ?? 0;
+        const glowColour = cur.layout.glowColour ?? '#7c3aed';
+        return {
+          slides: s.slides.map((sl) => ({
+            ...sl,
+            layout: { ...sl.layout, glowStrength, glowColour },
+          })),
+        };
+      }),
     patchLayout: (p) =>
       updateActive((s) => {
         const ids = new Set(targetIds(s));

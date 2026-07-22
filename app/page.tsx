@@ -365,6 +365,9 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
     patchTheme,
     patchGradient,
     patchText,
+    patchTextStyle,
+    applyTextStyleToAll,
+    applyPhoneGlowToAll,
     patchLayout,
     patchSlide,
     setBackgroundImage,
@@ -405,6 +408,14 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
   const slide = slides.find((s) => s.id === currentSlideId) ?? slides[0];
   const currentIndex = slides.indexOf(slide);
   const setBlockH = fontsReady ? measureSetTextZone(slides, theme, size) : 0;
+
+  // Effective text look for the current slide: its per-slide override, falling
+  // back to the set-wide theme.text. The look controls read/write these.
+  const ts = slide.textStyle ?? {};
+  const effColour = ts.colour ?? theme.text.colour;
+  const effAccent = ts.accentColour ?? theme.text.accentColour ?? '#fbbf24';
+  const effTextGlow = ts.glow ?? theme.text.glow ?? 0;
+  const effTextGlowColour = ts.glowColour ?? theme.text.glowColour ?? '#000000';
   const cap = capFor(activeStore);
   const presetIds = STORE_KINDS[activeStore].presetIds;
   const other = otherStore(activeStore);
@@ -1240,7 +1251,7 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
                 title="Push the phone off the right edge so it continues onto the next frame"
               />
             </Row>
-            <Row label={`Glow ${Math.round((slide.layout.glowStrength ?? 0) * 100)}%`}>
+            <Row label={`Phone glow ${Math.round((slide.layout.glowStrength ?? 0) * 100)}%`}>
               <span className="flex items-center gap-2">
                 <input
                   type="range"
@@ -1250,15 +1261,23 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
                   value={slide.layout.glowStrength ?? 0}
                   onChange={(e) => patchLayout({ glowStrength: Number(e.target.value) })}
                   className="w-28"
+                  title="Coloured halo around the phone — turn this up to see it"
                 />
                 <input
                   type="color"
                   value={slide.layout.glowColour ?? '#7c3aed'}
                   onChange={(e) => patchLayout({ glowColour: e.target.value })}
-                  title="Glow colour"
+                  title="Phone glow colour"
                 />
               </span>
             </Row>
+            <button
+              onClick={applyPhoneGlowToAll}
+              className="self-start text-[11px] text-neutral-400 underline hover:text-neutral-200"
+              title="Copy this slide's phone glow to every slide"
+            >
+              Apply phone glow to all slides
+            </button>
           </Section>
 
           <Section title="Type">
@@ -1304,37 +1323,48 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
             <Row label="Colour">
               <input
                 type="color"
-                value={theme.text.colour}
-                onChange={(e) => patchText({ colour: e.target.value })}
+                value={effColour}
+                onChange={(e) => patchTextStyle({ colour: e.target.value })}
               />
             </Row>
             <Row label="Accent colour">
               <input
                 type="color"
-                value={theme.text.accentColour ?? '#fbbf24'}
-                onChange={(e) => patchText({ accentColour: e.target.value })}
+                value={effAccent}
+                onChange={(e) => patchTextStyle({ accentColour: e.target.value })}
                 title="Colour for *asterisked* words in the headline / subhead"
               />
             </Row>
-            <Row label={`Text glow ${Math.round((theme.text.glow ?? 0) * 100)}%`}>
+            <Row label={`Text glow ${Math.round(effTextGlow * 100)}%`}>
               <span className="flex items-center gap-2">
                 <input
                   type="range"
                   min={0}
                   max={1}
                   step={0.02}
-                  value={theme.text.glow ?? 0}
-                  onChange={(e) => patchText({ glow: Number(e.target.value) })}
+                  value={effTextGlow}
+                  onChange={(e) => patchTextStyle({ glow: Number(e.target.value) })}
                   className="w-28"
                 />
                 <input
                   type="color"
-                  value={theme.text.glowColour ?? '#000000'}
-                  onChange={(e) => patchText({ glowColour: e.target.value })}
+                  value={effTextGlowColour}
+                  onChange={(e) => patchTextStyle({ glowColour: e.target.value })}
                   title="Glow colour"
                 />
               </span>
             </Row>
+            <button
+              onClick={applyTextStyleToAll}
+              className="self-start text-[11px] text-neutral-400 underline hover:text-neutral-200"
+              title="Copy this slide's colour, accent and glow to every slide"
+            >
+              Apply text colour / glow to all slides
+            </button>
+            <p className="text-[11px] leading-snug text-neutral-600">
+              Colour, accent and glow are per-slide — edit one screen freely, then broadcast
+              it. Font, size, weight and alignment stay shared across the set.
+            </p>
             <Row label="Align">
               <select
                 className={selectCls}

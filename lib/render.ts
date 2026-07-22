@@ -141,9 +141,16 @@ export function renderSlide(
   ctx.save();
   ctx.scale(scale, scale);
 
+  // Per-slide text look folds onto theme.text. Only non-metric fields (colour,
+  // accent, glow) can differ, so wrapping — and the set-wide zone — is
+  // unaffected; this just changes how the glyphs are painted.
+  const effTheme: Theme = slide.textStyle
+    ? { ...theme, text: { ...theme.text, ...slide.textStyle } }
+    : theme;
+
   // Layout first: the text zone is measured, and the device slot is whatever
   // rect is left. Device height comes from the slot, never from canvas width.
-  const cur = computeSlideGeom(ctx, slide, theme, size, opts.setBlockH);
+  const cur = computeSlideGeom(ctx, slide, effTheme, size, opts.setBlockH);
 
   drawBackground(ctx, slide, theme, w, h, scale, opts);
 
@@ -154,7 +161,7 @@ export function renderSlide(
     drawDevice(ctx, prev.bmp, theme, prev.layout, { ...prev.geo, cx: prev.geo.cx - w }, scale);
   }
 
-  drawTextBlock(ctx, cur.text, theme, w, cur.blockTop, cur.layout.textOffsetX ?? 0, scale);
+  drawTextBlock(ctx, cur.text, effTheme, w, cur.blockTop, cur.layout.textOffsetX ?? 0, scale);
   drawDevice(ctx, cur.bmp, theme, cur.layout, cur.geo, scale);
   drawGrain(ctx, w, h, theme.grain);
 
