@@ -359,8 +359,9 @@ function applyDuotone(ctx: Ctx2D, duo: { shadow: string; highlight: string }, w:
   ctx.restore();
 }
 
-// A glow hugging the true rectangular edge of the whole slide (square corners,
-// right at the boundary), the light bleeding inward. Drawn last, over text +
+// A soft glow bleeding inward from the slide edges — no visible outline. The
+// stroke is pushed fully off-canvas so its crisp line is clipped away and only
+// its blurred shadow (the glow) falls onto the canvas. Drawn last, over text +
 // phone. shadowBlur is device-px, so scale by hand; passes build the glow.
 function drawEdgeGlow(
   ctx: Ctx2D,
@@ -371,14 +372,14 @@ function drawEdgeGlow(
 ): void {
   if (glow.strength <= 0) return;
   const m = Math.min(w, h);
-  const lw = Math.max(2, m * 0.005);
-  const inset = lw / 2; // keep the whole stroke on-canvas, hugging the edge
+  const lw = Math.max(2, m * 0.006);
+  const off = lw; // whole stroke sits outside the canvas; only its glow shows
   ctx.save();
   ctx.strokeStyle = glow.colour;
   ctx.shadowColor = glow.colour;
   ctx.lineWidth = lw;
-  ctx.shadowBlur = m * 0.08 * glow.strength * scale;
-  for (let i = 0; i < 3; i++) ctx.strokeRect(inset, inset, w - 2 * inset, h - 2 * inset);
+  ctx.shadowBlur = m * 0.09 * glow.strength * scale;
+  for (let i = 0; i < 4; i++) ctx.strokeRect(-off, -off, w + 2 * off, h + 2 * off);
   ctx.restore();
 }
 
