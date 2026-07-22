@@ -1,6 +1,6 @@
-import type { Ctx2D, DeviceSpec, Slide, SlideLayout, StoreSize, Theme } from './types';
+import type { BackgroundPattern, Ctx2D, DeviceSpec, Slide, SlideLayout, StoreSize, Theme } from './types';
 import { getSpec } from './deviceSpecs';
-import { fillLinearGradient } from './gradient';
+import { fillLinearGradient, fillRadialGradient } from './gradient';
 import { drawGrain } from './grain';
 import { wrapRichText, lineWidth, type RichLine } from './text';
 import { resolveFontFamily } from './fonts';
@@ -153,6 +153,9 @@ export function renderSlide(
   const cur = computeSlideGeom(ctx, slide, effTheme, size, opts.setBlockH);
 
   drawBackground(ctx, slide, theme, w, h, scale, opts);
+  // Texture then vignette, both over the background and under everything else.
+  if (theme.pattern) drawPattern(ctx, theme.pattern, w, h);
+  if (theme.vignette) drawVignette(ctx, w, h, theme.vignette);
 
   // Hero span: a previous slide whose device overflows into this frame gets
   // redrawn here first, so this frame's own text and device sit on top of it.
@@ -251,6 +254,10 @@ function drawBackground(
   if (theme.gradient.mode === 'solid') {
     ctx.fillStyle = theme.gradient.from;
     ctx.fillRect(0, 0, w, h);
+  } else if (theme.gradient.mode === 'radial') {
+    ctx.fillStyle = theme.gradient.from;
+    ctx.fillRect(0, 0, w, h);
+    fillRadialGradient(ctx, w, h, theme.gradient.from, theme.gradient.to);
   } else {
     const continuous = theme.gradient.continuous && (opts.slideCount ?? 1) > 1;
     fillLinearGradient(
@@ -306,6 +313,66 @@ function drawPanoramaSlice(
     ctx.fillStyle = `rgba(0,0,0,${d})`;
     ctx.fillRect(0, 0, w, h);
   }
+}
+
+// Darkened edges: transparent at the centre, ramping to black at the corners.
+function drawVignette(ctx: Ctx2D, w: number, h: number, strength: number): void {
+  const cx = w / 2;
+  const cy = h / 2;
+  const g = ctx.createRadialGradient(cx, cy, Math.min(w, h) * 0.35, cx, cy, Math.hypot(w / 2, h / 2));
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(1, `rgba(0,0,0,${strength})`);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+}
+
+// Tiled geometric texture. All draws are in store coordinates (the ctx is
+// already scaled), so line widths and cell sizes stay identical in preview and
+// export. `scale` (cell size) is a fraction of canvas width.
+function drawPattern(ctx: Ctx2D, pattern: BackgroundPattern, w: number, h: number): void {
+  const step = Math.max(4, pattern.scale * w);
+  ctx.save();
+  ctx.globalAlpha = Math.max(0, Math.min(1, pattern.opacity));
+  ctx.fillStyle = pattern.colour;
+  ctx.strokeStyle = pattern.colour;
+  ctx.lineWidth = Math.max(1, step * 0.045);
+
+  if (pattern.kind === 'dots') {
+    const r = step * 0.09;
+    for (let y = step / 2; y < h; y += step) {
+      for (let x = step / 2; x < w; x += step) {
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  } else if (pattern.kind === 'grid') {
+    ctx.beginPath();
+    for (let x = 0; x <= w; x += step) {
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, h);
+    }
+    for (let y = 0; y <= h; y += step) {
+      ctx.moveTo(0, y);
+      ctx.lineTo(w, y);
+    }
+    ctx.stroke();
+  } else {
+    // 45° diagonals; crosshatch adds the opposite direction.
+    ctx.beginPath();
+    for (let d = -h; d < w; d += step) {
+      ctx.moveTo(d, 0);
+      ctx.lineTo(d + h, h);
+    }
+    if (pattern.kind === 'crosshatch') {
+      for (let d = 0; d < w + h; d += step) {
+        ctx.moveTo(d, 0);
+        ctx.lineTo(d - h, h);
+      }
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 function layoutText(ctx: Ctx2D, slide: Slide, theme: Theme, w: number): TextLayout {

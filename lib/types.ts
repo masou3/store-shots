@@ -65,19 +65,37 @@ export type SlideBackground = {
   darken: number; // 0..~0.8, opacity of a black overlay for text legibility
 };
 
+export type PatternKind = 'dots' | 'grid' | 'lines' | 'crosshatch';
+
+// A tiled, deterministic background texture drawn over the background fill.
+export type BackgroundPattern = {
+  kind: PatternKind;
+  colour: string;
+  opacity: number; // 0..1
+  scale: number; // cell size as a fraction of canvas width (e.g. 0.05 ≈ 20 cells)
+};
+
 export type Theme = {
   sizeId: string;
   frameId: string;
   lastFrameId?: string; // last non-'none' frame; 'none' borrows its screen aspect when no image is loaded
   frameColour: string | null; // null = the device spec's own body colour
   gradient: {
-    mode: 'gradient' | 'solid';
+    // 'gradient' = linear (angle + continuous apply); 'radial' = centred glow
+    // from `from` out to `to`; 'solid' = flat `from`.
+    mode: 'gradient' | 'solid' | 'radial';
     from: string;
     to: string;
     angle: number; // degrees, CSS convention; solid uses `from`
     continuous: boolean; // one gradient across a virtual canvas of width x slideCount, each slide takes its slice
   };
   grain: number; // 0..1, overlay opacity
+  // Darkened edges over the background (under the device), 0..~0.8. Focuses the
+  // eye on the phone. Applies over any background type.
+  vignette?: number;
+  // Tiled geometric texture over the background, under the device. Deterministic
+  // so exports stay byte-identical.
+  pattern?: BackgroundPattern;
   // Set-wide panoramic background: one photo spread across the whole set, each
   // slide showing its horizontal slice (like gradient.continuous, but a photo).
   // A slide's own `bg` overrides it for that slide. Same blur/darken as bg.

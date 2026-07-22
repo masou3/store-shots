@@ -1000,47 +1000,62 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
               <select
                 className={selectCls}
                 value={theme.gradient.mode}
-                onChange={(e) => patchGradient({ mode: e.target.value as 'gradient' | 'solid' })}
+                onChange={(e) =>
+                  patchGradient({ mode: e.target.value as 'gradient' | 'solid' | 'radial' })
+                }
               >
-                <option value="gradient">gradient</option>
+                <option value="gradient">linear gradient</option>
+                <option value="radial">radial glow</option>
                 <option value="solid">solid</option>
               </select>
             </Row>
-            <Row label={theme.gradient.mode === 'solid' ? 'Colour' : 'Colour A'}>
+            <Row
+              label={
+                theme.gradient.mode === 'solid'
+                  ? 'Colour'
+                  : theme.gradient.mode === 'radial'
+                    ? 'Centre'
+                    : 'Colour A'
+              }
+            >
               <input
                 type="color"
                 value={theme.gradient.from}
                 onChange={(e) => patchGradient({ from: e.target.value })}
               />
             </Row>
-            {theme.gradient.mode === 'gradient' && (
+            {theme.gradient.mode !== 'solid' && (
               <>
-                <Row label="Colour B">
+                <Row label={theme.gradient.mode === 'radial' ? 'Edge' : 'Colour B'}>
                   <input
                     type="color"
                     value={theme.gradient.to}
                     onChange={(e) => patchGradient({ to: e.target.value })}
                   />
                 </Row>
-                <Row label={`Angle ${theme.gradient.angle}°`}>
-                  <input
-                    type="range"
-                    min={0}
-                    max={360}
-                    step={1}
-                    value={theme.gradient.angle}
-                    onChange={(e) => patchGradient({ angle: Number(e.target.value) })}
-                    className="w-36"
-                  />
-                </Row>
-                <label className="flex items-center gap-2 text-xs text-neutral-400">
-                  <input
-                    type="checkbox"
-                    checked={theme.gradient.continuous}
-                    onChange={(e) => patchGradient({ continuous: e.target.checked })}
-                  />
-                  Continuous across set
-                </label>
+                {theme.gradient.mode === 'gradient' && (
+                  <>
+                    <Row label={`Angle ${theme.gradient.angle}°`}>
+                      <input
+                        type="range"
+                        min={0}
+                        max={360}
+                        step={1}
+                        value={theme.gradient.angle}
+                        onChange={(e) => patchGradient({ angle: Number(e.target.value) })}
+                        className="w-36"
+                      />
+                    </Row>
+                    <label className="flex items-center gap-2 text-xs text-neutral-400">
+                      <input
+                        type="checkbox"
+                        checked={theme.gradient.continuous}
+                        onChange={(e) => patchGradient({ continuous: e.target.checked })}
+                      />
+                      Continuous across set
+                    </label>
+                  </>
+                )}
                 <div className="mt-1 flex flex-col gap-2">
                   {GRADIENT_PACKS.map((pack) => (
                     <div key={pack.label}>
@@ -1054,7 +1069,6 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
                             title={`${p.from} → ${p.to}`}
                             onClick={() =>
                               patchGradient({
-                                mode: 'gradient',
                                 from: p.from,
                                 to: p.to,
                                 ...(p.angle !== undefined ? { angle: p.angle } : {}),
@@ -1168,6 +1182,84 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
                 </>
               )}
             </div>
+            <Row label={`Vignette ${Math.round((theme.vignette ?? 0) * 100)}%`}>
+              <input
+                type="range"
+                min={0}
+                max={0.8}
+                step={0.02}
+                value={theme.vignette ?? 0}
+                onChange={(e) => patchTheme({ vignette: Number(e.target.value) })}
+                className="w-36"
+                title="Darken the edges to focus on the phone"
+              />
+            </Row>
+            <Row label="Pattern">
+              <select
+                className={selectCls}
+                value={theme.pattern?.kind ?? 'none'}
+                onChange={(e) => {
+                  const kind = e.target.value;
+                  if (kind === 'none') {
+                    patchTheme({ pattern: undefined });
+                  } else {
+                    patchTheme({
+                      pattern: {
+                        kind: kind as NonNullable<typeof theme.pattern>['kind'],
+                        colour: theme.pattern?.colour ?? '#ffffff',
+                        opacity: theme.pattern?.opacity ?? 0.08,
+                        scale: theme.pattern?.scale ?? 0.05,
+                      },
+                    });
+                  }
+                }}
+              >
+                <option value="none">none</option>
+                <option value="dots">dots</option>
+                <option value="grid">grid</option>
+                <option value="lines">lines</option>
+                <option value="crosshatch">crosshatch</option>
+              </select>
+            </Row>
+            {theme.pattern && (
+              <>
+                <Row label="Pattern colour">
+                  <input
+                    type="color"
+                    value={theme.pattern.colour}
+                    onChange={(e) =>
+                      patchTheme({ pattern: { ...theme.pattern!, colour: e.target.value } })
+                    }
+                  />
+                </Row>
+                <Row label={`Opacity ${Math.round(theme.pattern.opacity * 100)}%`}>
+                  <input
+                    type="range"
+                    min={0.02}
+                    max={0.5}
+                    step={0.02}
+                    value={theme.pattern.opacity}
+                    onChange={(e) =>
+                      patchTheme({ pattern: { ...theme.pattern!, opacity: Number(e.target.value) } })
+                    }
+                    className="w-36"
+                  />
+                </Row>
+                <Row label={`Scale ${(theme.pattern.scale * 100).toFixed(1)}`}>
+                  <input
+                    type="range"
+                    min={0.02}
+                    max={0.15}
+                    step={0.005}
+                    value={theme.pattern.scale}
+                    onChange={(e) =>
+                      patchTheme({ pattern: { ...theme.pattern!, scale: Number(e.target.value) } })
+                    }
+                    className="w-36"
+                  />
+                </Row>
+              </>
+            )}
             <Row label={`Grain ${theme.grain.toFixed(3)}`}>
               <input
                 type="range"

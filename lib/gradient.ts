@@ -41,3 +41,25 @@ export function fillLinearGradient(
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, w, h);
 }
+
+// Centred radial glow: `from` at the middle out to `to` at the corners. Same
+// Oklab stop ramp as the linear fill so saturated pairs don't grey out.
+export function fillRadialGradient(
+  ctx: Ctx2D,
+  w: number,
+  h: number,
+  from: string,
+  to: string,
+): void {
+  const cx = w / 2;
+  const cy = h / 2;
+  const r = Math.hypot(w / 2, h / 2); // reach the corners
+  const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+  const interp = interpolate([from, to], 'oklab');
+  for (let i = 0; i <= STOP_COUNT; i++) {
+    const t = i / STOP_COUNT;
+    g.addColorStop(t, formatRgb(interp(t)));
+  }
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+}
