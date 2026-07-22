@@ -1550,12 +1550,32 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
                 />
               </span>
             </Row>
+            <Row label={`Frame rim ${Math.round((slide.layout.rimStrength ?? 0) * 100)}%`}>
+              <span className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.02}
+                  value={slide.layout.rimStrength ?? 0}
+                  onChange={(e) => patchLayout({ rimStrength: Number(e.target.value) })}
+                  className="w-28"
+                  title="Bright neon outline hugging the frame edge"
+                />
+                <input
+                  type="color"
+                  value={slide.layout.rimColour ?? '#22d3ee'}
+                  onChange={(e) => patchLayout({ rimColour: e.target.value })}
+                  title="Frame rim colour"
+                />
+              </span>
+            </Row>
             <button
               onClick={applyPhoneGlowToAll}
               className="self-start text-[11px] text-neutral-400 underline hover:text-neutral-200"
-              title="Copy this slide's phone glow to every slide"
+              title="Copy this slide's phone glow and frame rim to every slide"
             >
-              Apply phone glow to all slides
+              Apply glow &amp; rim to all slides
             </button>
           </Section>
 

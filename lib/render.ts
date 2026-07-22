@@ -729,6 +729,28 @@ function drawDevice(
     ctx.stroke();
   }
 
+  // Neon rim: a bright glowing stroke hugging the outer edge (screen edge when
+  // frameless), drawn last so the glow sits on top of the body. Multiple passes
+  // build the neon intensity; shadowBlur is device-px, so scale it by hand.
+  const rim = layout.rimStrength ?? 0;
+  if (rim > 0) {
+    const rimW = spec.id === 'none' ? screenW : outerW;
+    const rimH = spec.id === 'none' ? screenH : outerH;
+    const rimR = spec.id === 'none' ? spec.screenRadiusPct * screenW : outerRadius;
+    const colour = layout.rimColour ?? '#22d3ee';
+    ctx.save();
+    ctx.strokeStyle = colour;
+    ctx.shadowColor = colour;
+    ctx.lineWidth = Math.max(2, outerW * 0.006);
+    ctx.shadowBlur = outerW * 0.14 * rim * scale;
+    ctx.beginPath();
+    ctx.roundRect(-rimW / 2, -rimH / 2, rimW, rimH, rimR);
+    ctx.stroke();
+    ctx.stroke();
+    ctx.stroke();
+    ctx.restore();
+  }
+
   ctx.restore();
 }
 
