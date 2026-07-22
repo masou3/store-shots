@@ -808,3 +808,33 @@ export function drawSafeAreaOverlay(ctx: Ctx2D, size: StoreSize, scale: number):
   ctx.strokeRect(inset, inset, w - 2 * inset, h - 2 * inset);
   ctx.restore();
 }
+
+export type AlignGuide = { axis: 'v' | 'h'; pos: number };
+
+// Preview-only smart guides shown while dragging: a full-length line at each
+// coordinate the dragged object has snapped to (canvas centre or the other
+// object's centre). Never part of the export.
+export function drawAlignmentGuides(
+  ctx: Ctx2D,
+  size: StoreSize,
+  scale: number,
+  guides: AlignGuide[],
+): void {
+  if (guides.length === 0) return;
+  ctx.save();
+  ctx.scale(scale, scale);
+  ctx.strokeStyle = 'rgba(244, 114, 182, 0.95)'; // pink, like PowerPoint's guides
+  ctx.lineWidth = Math.max(1, size.width * 0.0025);
+  ctx.beginPath();
+  for (const g of guides) {
+    if (g.axis === 'v') {
+      ctx.moveTo(g.pos, 0);
+      ctx.lineTo(g.pos, size.height);
+    } else {
+      ctx.moveTo(0, g.pos);
+      ctx.lineTo(size.width, g.pos);
+    }
+  }
+  ctx.stroke();
+  ctx.restore();
+}

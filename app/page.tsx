@@ -17,7 +17,14 @@ import { LAYOUTS } from '@/lib/layouts';
 import { GRADIENT_PACKS } from '@/lib/presets';
 import { FONT_FAMILIES, loadRenderFonts } from '@/lib/fonts';
 import { copyWarning } from '@/lib/copyWarning';
-import { renderSlide, drawSafeAreaOverlay, measureSetTextZone, hitRegions } from '@/lib/render';
+import {
+  renderSlide,
+  drawSafeAreaOverlay,
+  drawAlignmentGuides,
+  measureSetTextZone,
+  hitRegions,
+  type AlignGuide,
+} from '@/lib/render';
 import JSZip from 'jszip';
 import { exportSlidePng, downloadBlob } from '@/lib/export';
 import { removeImage, saveImage } from '@/lib/imageStore';
@@ -406,8 +413,16 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
     baseY: number;
     base: SlideLayout;
     moved: boolean;
+    // The dragged object's centre at grab time, and the OTHER object's fixed
+    // centre — snap/guide targets during the drag (store coords).
+    cX0: number;
+    cY0: number;
+    otherCX: number;
+    otherCY: number;
   } | null>(null);
   const didDragRef = useRef(false);
+  // Active alignment guides (preview overlay while dragging).
+  const [guides, setGuides] = useState<AlignGuide[]>([]);
   const [fontsReady, setFontsReady] = useState(false);
   const [showSafeArea, setShowSafeArea] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -619,8 +634,9 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
       spillPrev: prev?.layout.overlapNext ? prev : undefined,
     });
     if (showSafeArea) drawSafeAreaOverlay(ctx, size, scale);
+    drawAlignmentGuides(ctx, size, scale, guides);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [theme, slide, slides, sizeId, showSafeArea, fontsReady, setBlockH, imagesVersion, viewMode]);
+  }, [theme, slide, slides, sizeId, showSafeArea, fontsReady, setBlockH, imagesVersion, viewMode, guides]);
 
   useEffect(() => {
     cancelAnimationFrame(rafRef.current);
@@ -673,6 +689,10 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
       const target = inDevice ? 'device' : inText ? 'text' : null;
       if (!target) return;
       const L = slide.layout;
+      const deviceC = { x: r.device.cx, y: r.device.cy };
+      const textC = { x: r.text.x + r.text.w / 2, y: r.text.y + r.text.h / 2 };
+      const self = target === 'device' ? deviceC : textC;
+      const other = target === 'device' ? textC : deviceC;
       dragRef.current = {
         target,
         startSX: sx,
@@ -681,6 +701,10 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
         baseY: target === 'device' ? L.deviceOffsetY : L.textOffsetY ?? 0,
         base: L,
         moved: false,
+        cX0: self.x,
+        cY0: self.y,
+        otherCX: other.x,
+        otherCY: other.y,
       };
       canvasRef.current?.setPointerCapture(e.pointerId);
     },
@@ -716,11 +740,43 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
       if (!d.moved && cssMove < 3) return;
       d.moved = true;
       didDragRef.current = true;
+
+      // Snap the dragged object's centre to the canvas centre or the other
+      // object's centre when within threshold; draw a guide at each snap.
+      const snap = size.width * 0.012;
+      let cx = d.cX0 + dx;
+      let cy = d.cY0 + dy;
+      const nextGuides: AlignGuide[] = [];
+      const nearest = (v: number, targets: number[]) => {
+        let best: number | null = null;
+        let bestDist = snap;
+        for (const t of targets) {
+          const dist = Math.abs(v - t);
+          if (dist < bestDist) {
+            bestDist = dist;
+            best = t;
+          }
+        }
+        return best;
+      };
+      const sx0 = nearest(cx, [size.width / 2, d.otherCX]);
+      if (sx0 !== null) {
+        cx = sx0;
+        nextGuides.push({ axis: 'v', pos: sx0 });
+      }
+      const sy0 = nearest(cy, [size.height / 2, d.otherCY]);
+      if (sy0 !== null) {
+        cy = sy0;
+        nextGuides.push({ axis: 'h', pos: sy0 });
+      }
+      const ox = d.baseX + (cx - d.cX0);
+      const oy = d.baseY + (cy - d.cY0);
       const patch: Partial<SlideLayout> =
         d.target === 'device'
-          ? { deviceOffsetX: d.baseX + dx, deviceOffsetY: d.baseY + dy }
-          : { textOffsetX: d.baseX + dx, textOffsetY: d.baseY + dy };
+          ? { deviceOffsetX: ox, deviceOffsetY: oy }
+          : { textOffsetX: ox, textOffsetY: oy };
       patchSlide(slide.id, { layout: { ...d.base, ...patch } });
+      setGuides(nextGuides);
     },
     [eventToStore, patchSlide, slide.id, slide, theme, size, setBlockH, currentIndex, slides],
   );
@@ -728,6 +784,7 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
   const onCanvasPointerUp = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
     if (dragRef.current) canvasRef.current?.releasePointerCapture(e.pointerId);
     dragRef.current = null;
+    setGuides([]);
   }, []);
 
   const ROW_GAP = 8;
