@@ -435,8 +435,19 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
           : { text: `${n}/${cap.max}`, cls: 'text-green-500' };
 
   useEffect(() => {
-    loadRenderFonts(theme.text.family).then(() => setFontsReady(true));
-  }, [theme.text.family]);
+    let cancelled = false;
+    loadRenderFonts(theme.text.family).then(() => {
+      if (cancelled) return;
+      setFontsReady(true);
+      // Canvas text doesn't repaint when a face finishes loading; bump the image
+      // version to force the preview, row and thumbnails to redraw in the new
+      // font (previously fine only because every family was already resident).
+      bumpImages();
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [theme.text.family, bumpImages]);
 
   const importFiles = useCallback(
     async (files: File[]) => {

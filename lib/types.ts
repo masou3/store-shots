@@ -6,7 +6,16 @@ export type StoreSize = {
   height: number;
 };
 
-export type FontFamilyId = 'inter' | 'system' | 'serif' | 'mono';
+export type FontFamilyId =
+  | 'inter'
+  | 'poppins'
+  | 'montserrat'
+  | 'sora'
+  | 'playfair'
+  | 'nunito'
+  | 'system'
+  | 'serif'
+  | 'mono';
 
 export type LayoutId = 'top-text-crop' | 'top-text-float' | 'bottom-text-crop' | 'angled';
 

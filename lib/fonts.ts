@@ -4,24 +4,31 @@ import { SUBHEAD_WEIGHT } from './constants';
 // subhead weight. Keep in sync with Theme['text']['weight'].
 export const RENDER_WEIGHTS: number[] = [400, 600, 700, 800, SUBHEAD_WEIGHT].sort();
 
-// Inter is bundled via next/font/local in app/layout.tsx, which exposes the
-// hashed family stack through the --font-inter CSS variable on <html>.
+// Fonts bundled via next/font in app/layout.tsx expose their hashed family
+// stack through a CSS variable on <html>. Read it (falling back to the plain
+// family name when the DOM isn't available, e.g. SSR).
+function cssFontStack(varName: string, fallback: string): string {
+  if (typeof document === 'undefined') return fallback;
+  const v = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+  return v || fallback;
+}
+
 export function interFontFamily(): string {
-  if (typeof document === 'undefined') return 'Inter, sans-serif';
-  const v = getComputedStyle(document.documentElement)
-    .getPropertyValue('--font-inter')
-    .trim();
-  return v || 'Inter, sans-serif';
+  return cssFontStack('--font-inter', 'Inter, sans-serif');
 }
 
 import type { FontFamilyId } from './types';
 
-// The selectable families. Inter is the bundled default; the rest are local
-// stacks — document.fonts.check() only fails for registered-but-unloaded
-// faces, so the export guard stays meaningful for Inter and harmless for the
-// others.
+// The selectable families. Inter + the five next/font/google faces are bundled
+// (document.fonts.check() is a real assertion for these); System/Serif/Mono are
+// OS stacks where the check is harmless.
 export const FONT_FAMILIES: Array<{ id: FontFamilyId; label: string }> = [
   { id: 'inter', label: 'Inter' },
+  { id: 'poppins', label: 'Poppins' },
+  { id: 'montserrat', label: 'Montserrat' },
+  { id: 'sora', label: 'Sora' },
+  { id: 'playfair', label: 'Playfair Display' },
+  { id: 'nunito', label: 'Nunito' },
   { id: 'system', label: 'System' },
   { id: 'serif', label: 'Serif' },
   { id: 'mono', label: 'Mono' },
@@ -29,6 +36,16 @@ export const FONT_FAMILIES: Array<{ id: FontFamilyId; label: string }> = [
 
 export function resolveFontFamily(id: FontFamilyId): string {
   switch (id) {
+    case 'poppins':
+      return cssFontStack('--font-poppins', 'Poppins, sans-serif');
+    case 'montserrat':
+      return cssFontStack('--font-montserrat', 'Montserrat, sans-serif');
+    case 'sora':
+      return cssFontStack('--font-sora', 'Sora, sans-serif');
+    case 'playfair':
+      return cssFontStack('--font-playfair', 'Playfair Display, serif');
+    case 'nunito':
+      return cssFontStack('--font-nunito', 'Nunito, sans-serif');
     case 'system':
       return 'system-ui, "Segoe UI", Arial, sans-serif';
     case 'serif':
