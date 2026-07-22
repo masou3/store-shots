@@ -31,13 +31,44 @@ import {
 } from '@/lib/persistence';
 import { useStore } from '@/lib/store';
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+// Collapsible panel. Open/closed is remembered per title so the sidebar stays
+// as tidy as the user left it; only the essentials start open (defaultOpen).
+function Section({
+  title,
+  children,
+  defaultOpen = false,
+}: {
+  title: string;
+  children: React.ReactNode;
+  defaultOpen?: boolean;
+}) {
+  const key = `storeshots:section:${title}`;
+  const [open, setOpen] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return defaultOpen;
+    const v = localStorage.getItem(key);
+    return v === null ? defaultOpen : v === '1';
+  });
+  const toggle = () =>
+    setOpen((o) => {
+      const next = !o;
+      try {
+        localStorage.setItem(key, next ? '1' : '0');
+      } catch {
+        /* private mode / storage full — fine, just don't persist */
+      }
+      return next;
+    });
   return (
-    <section className="border-b border-neutral-800 px-3 py-3">
-      <h2 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-neutral-500">
-        {title}
-      </h2>
-      <div className="flex flex-col gap-2">{children}</div>
+    <section className="border-b border-neutral-800">
+      <button
+        onClick={toggle}
+        className="flex w-full items-center justify-between px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-neutral-500 hover:text-neutral-300"
+        aria-expanded={open}
+      >
+        <span>{title}</span>
+        <span className={`text-neutral-600 transition-transform ${open ? 'rotate-90' : ''}`}>▸</span>
+      </button>
+      {open && <div className="flex flex-col gap-2 px-3 pb-3">{children}</div>}
     </section>
   );
 }
@@ -964,8 +995,38 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
       <div className="flex min-h-0 flex-1">
         <aside className="w-72 shrink-0 overflow-y-auto border-r border-neutral-800">
           <p className="px-3 pt-3 text-[10px] font-bold uppercase tracking-widest text-neutral-600">
-            {STORE_KINDS[activeStore].label} set
+            {STORE_KINDS[activeStore].label} set · slide {currentIndex + 1} of {slides.length}
           </p>
+          <Section title="Text" defaultOpen>
+            <textarea
+              rows={2}
+              value={slide.headline}
+              onChange={(e) => patchSlide(slide.id, { headline: e.target.value })}
+              placeholder="Headline"
+              className={inputCls + ' w-full resize-y'}
+            />
+            {headlineWarning && (
+              <p className="text-[11px] leading-snug text-amber-400">{headlineWarning}</p>
+            )}
+            <textarea
+              rows={2}
+              value={slide.subhead ?? ''}
+              onChange={(e) =>
+                patchSlide(slide.id, {
+                  subhead: e.target.value === '' ? undefined : e.target.value,
+                })
+              }
+              placeholder="Subheadline (optional)"
+              className={inputCls + ' w-full resize-y'}
+            />
+            {subheadWarning && (
+              <p className="text-[11px] leading-snug text-amber-400">{subheadWarning}</p>
+            )}
+            <p className="text-[11px] text-neutral-600">
+              wrap words in *asterisks* to paint them the accent colour · image: drop on the
+              preview, click it, or paste — multi-file drop fans across slides from this one
+            </p>
+          </Section>
           <Section title="Project file">
             <div className="flex flex-wrap gap-2">
               <button
@@ -1040,7 +1101,7 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
               </div>
             )}
           </Section>
-          <Section title="Background">
+          <Section title="Background" defaultOpen>
             <Row label="Mode">
               <select
                 className={selectCls}
@@ -1730,39 +1791,6 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
             )}
           </Section>
 
-          <p className="px-3 pt-3 text-[10px] font-bold uppercase tracking-widest text-neutral-600">
-            Slide {currentIndex + 1} of {slides.length}
-          </p>
-          <Section title="Text">
-            <textarea
-              rows={2}
-              value={slide.headline}
-              onChange={(e) => patchSlide(slide.id, { headline: e.target.value })}
-              placeholder="Headline"
-              className={inputCls + ' w-full resize-y'}
-            />
-            {headlineWarning && (
-              <p className="text-[11px] leading-snug text-amber-400">{headlineWarning}</p>
-            )}
-            <textarea
-              rows={2}
-              value={slide.subhead ?? ''}
-              onChange={(e) =>
-                patchSlide(slide.id, {
-                  subhead: e.target.value === '' ? undefined : e.target.value,
-                })
-              }
-              placeholder="Subheadline (optional)"
-              className={inputCls + ' w-full resize-y'}
-            />
-            {subheadWarning && (
-              <p className="text-[11px] leading-snug text-amber-400">{subheadWarning}</p>
-            )}
-            <p className="text-[11px] text-neutral-600">
-              wrap words in *asterisks* to paint them the accent colour · image: drop on the
-              preview, click it, or paste — multi-file drop fans across slides from this one
-            </p>
-          </Section>
         </aside>
 
         <main className="flex min-h-0 flex-1 flex-col items-center gap-2 p-4">
