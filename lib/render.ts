@@ -359,9 +359,9 @@ function applyDuotone(ctx: Ctx2D, duo: { shadow: string; highlight: string }, w:
   ctx.restore();
 }
 
-// A glowing rounded border just inside the canvas, framing the whole slide.
-// Drawn last (over text + phone). shadowBlur is device-px, so scale by hand;
-// three passes build the glow like the other neon effects.
+// A glow hugging the true rectangular edge of the whole slide (square corners,
+// right at the boundary), the light bleeding inward. Drawn last, over text +
+// phone. shadowBlur is device-px, so scale by hand; passes build the glow.
 function drawEdgeGlow(
   ctx: Ctx2D,
   glow: { strength: number; colour: string },
@@ -371,18 +371,14 @@ function drawEdgeGlow(
 ): void {
   if (glow.strength <= 0) return;
   const m = Math.min(w, h);
-  const inset = m * 0.02;
-  const radius = m * 0.04;
+  const lw = Math.max(2, m * 0.005);
+  const inset = lw / 2; // keep the whole stroke on-canvas, hugging the edge
   ctx.save();
   ctx.strokeStyle = glow.colour;
   ctx.shadowColor = glow.colour;
-  ctx.lineWidth = Math.max(2, m * 0.006);
-  ctx.shadowBlur = m * 0.06 * glow.strength * scale;
-  ctx.beginPath();
-  ctx.roundRect(inset, inset, w - 2 * inset, h - 2 * inset, radius);
-  ctx.stroke();
-  ctx.stroke();
-  ctx.stroke();
+  ctx.lineWidth = lw;
+  ctx.shadowBlur = m * 0.08 * glow.strength * scale;
+  for (let i = 0; i < 3; i++) ctx.strokeRect(inset, inset, w - 2 * inset, h - 2 * inset);
   ctx.restore();
 }
 
