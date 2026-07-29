@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import type { DeviceSpec, Slide, SlideLayout, StoreSize, Theme } from '@/lib/types';
-import { getSize } from '@/lib/sizes';
+import type { DeviceSpec, Orientation, Slide, SlideLayout, StoreSize, Theme } from '@/lib/types';
+import { getSize, orientSize } from '@/lib/sizes';
 import { getSpec } from '@/lib/deviceSpecs';
 import { BASE_SLIDE_LAYOUT, LAYOUTS, applyLayout, type LayoutPreset } from '@/lib/layouts';
 import { renderSlide } from '@/lib/render';
@@ -76,7 +76,8 @@ async function generateTestPattern(spec: DeviceSpec): Promise<void> {
 
 function FramePreview({
   frameId,
-  size,
+  size: rawSize,
+  orientation,
   preset,
   imageKey,
   imageFit,
@@ -84,6 +85,7 @@ function FramePreview({
 }: {
   frameId: string;
   size: StoreSize;
+  orientation: Orientation;
   preset: LayoutPreset;
   imageKey: string | null;
   imageFit: 'cover' | 'contain';
@@ -91,6 +93,7 @@ function FramePreview({
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const CSS_H = 440;
+  const size = orientSize(rawSize, orientation);
 
   useEffect(() => {
     if (!fontsReady) return;
@@ -108,29 +111,39 @@ function FramePreview({
 
     const theme = makeTheme(frameId, size.id);
     const slide: Slide = {
-      id: `debug-${frameId}-${preset.id}`,
+      id: `debug-${frameId}-${preset.id}-${orientation}`,
       headline: 'Track every rep.',
       subhead: 'Sets, reps and PRs logged in one tap.',
       imageKey: imageKey ?? undefined,
       layout: makeLayout(imageFit, preset),
       layoutId: preset.id,
+      orientation,
     };
     renderSlide(ctx, slide, theme, size, canvas.width / size.width);
-  }, [frameId, size, preset, imageKey, imageFit, fontsReady]);
+  }, [frameId, size, orientation, preset, imageKey, imageFit, fontsReady]);
 
   return (
     <div className="flex flex-col items-center gap-2">
       <canvas ref={canvasRef} className="rounded shadow-2xl shadow-black/60" />
       <p className="font-mono text-xs text-neutral-500">
         {getSpec(frameId).label} — {size.width} × {size.height}
+        {orientation === 'landscape' ? ' · landscape' : ''}
       </p>
     </div>
   );
 }
 
+// Tablets appear twice: portrait, and landscape (the canvas W/H swapped and
+// the body turned 90°), because a tablet app's landscape frame is the one this
+// page exists to eyeball — the camera must land centred on the TOP long edge
+// once turned, and the corners must still clip cleanly at 4:3 and 16:10.
 const COLUMNS = [
-  { frameId: 'iphone-17-pro', sizeId: 'ios-6.9' },
-  { frameId: 'pixel-10-pro', sizeId: 'play-phone' },
+  { frameId: 'iphone-17-pro', sizeId: 'ios-6.9', orientation: 'portrait' },
+  { frameId: 'pixel-10-pro', sizeId: 'play-phone', orientation: 'portrait' },
+  { frameId: 'ipad-pro-13', sizeId: 'ipad-13', orientation: 'portrait' },
+  { frameId: 'ipad-pro-13', sizeId: 'ipad-13', orientation: 'landscape' },
+  { frameId: 'android-tablet-11', sizeId: 'play-tablet-10', orientation: 'portrait' },
+  { frameId: 'android-tablet-11', sizeId: 'play-tablet-10', orientation: 'landscape' },
 ] as const;
 
 export default function FramesDebugPage() {
@@ -149,7 +162,10 @@ export default function FramesDebugPage() {
 
   useEffect(() => {
     loadRenderFonts().then(() => setFontsReady(true));
-    Promise.all(COLUMNS.map((c) => generateTestPattern(getSpec(c.frameId)))).then(() =>
+    // Deduped: tablets appear as both a portrait and a landscape column, but
+    // the pattern is per FRAME (generated at its native aspect), not per column.
+    const frameIds = [...new Set(COLUMNS.map((c) => c.frameId))];
+    Promise.all(frameIds.map((id) => generateTestPattern(getSpec(id)))).then(() =>
       setPatternsReady(true),
     );
   }, []);
@@ -162,11 +178,16 @@ export default function FramesDebugPage() {
       <div>
         <h1 className="text-sm font-semibold text-neutral-100">Frame debug</h1>
         <p className="mt-1 max-w-2xl text-xs text-neutral-400">
-          Four layouts down, iPhone and Pixel across, all eight fed the test pattern
-          (generated per frame at that frame&apos;s native aspect — iPhone 1320:2868, Pixel
-          1280:2856). Drop or paste a real screenshot anywhere to feed all eight instead.
-          The pattern checks centring and geometry, not the aspect constants: cross dead
-          centre, border even where the screen is uncropped, corners clipping cleanly.
+          Four layouts down; iPhone, Pixel, iPad (portrait + landscape) and Android
+          tablet (portrait + landscape) across. Each is fed a test pattern generated at
+          that frame&apos;s native aspect — iPhone 1320:2868, Pixel 1280:2856, iPad
+          2064:2752, Android tablet 1600:2560. Drop or paste a real screenshot anywhere
+          to feed every cell instead. The pattern checks centring and geometry, NOT the
+          aspect constants — a pattern generated from a constant round-trips through it
+          regardless, so only a native capture off a real panel could test those. What
+          this page catches: cross dead centre, border even where the screen is
+          uncropped, corners clipping cleanly, and on the landscape tablets the camera
+          landing centred on the top long edge.
         </p>
       </div>
 
@@ -226,9 +247,10 @@ export default function FramesDebugPage() {
             <div className="flex flex-wrap items-start gap-10">
               {COLUMNS.map((col) => (
                 <FramePreview
-                  key={col.frameId}
+                  key={`${col.frameId}-${col.orientation}`}
                   frameId={col.frameId}
                   size={getSize(col.sizeId)}
+                  orientation={col.orientation}
                   preset={preset}
                   imageKey={keyFor(col.frameId)}
                   imageFit={imageFit}

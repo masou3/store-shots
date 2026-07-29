@@ -491,7 +491,11 @@ function layoutText(
   const t = theme.text;
   const family = resolveFontFamily(t.family);
   const headSize = typeW * (t.sizePct / 100);
-  const maxW = Math.min(w * (t.maxWidthPct / 100), w * (1 - 2 * SAFE_AREA_PCT));
+  // The safe-area inset is a fraction of the SHORT side (typeW), matching
+  // drawSafeAreaOverlay. Taking it off `w` instead made the two agree only
+  // when w was the short side — i.e. in portrait — so on a landscape canvas
+  // the dashed overlay stopped describing where text could actually go.
+  const maxW = Math.min(w * (t.maxWidthPct / 100), w - 2 * typeW * SAFE_AREA_PCT);
 
   const headlineFont = `${t.weight} ${headSize}px ${family}`;
   const subSize = headSize * SUBHEAD_SIZE_RATIO;
@@ -835,14 +839,24 @@ function drawDevice(
   ctx.restore();
 }
 
+// Side buttons run vertically down the left/right edges; top/bottom buttons
+// run horizontally along those edges (a tablet's power and volume sit on the
+// short edge, which no phone spec needed). `topPct`/`lenPct` are fractions of
+// whichever edge the button is on.
 function drawButtons(ctx: Ctx2D, spec: DeviceSpec, outerW: number, outerH: number): void {
   const thickness = outerW * BUTTON_THICKNESS_PCT;
   ctx.fillStyle = spec.body.edge;
   for (const b of spec.buttons) {
-    const x = b.side === 'left' ? -outerW / 2 - thickness / 2 : outerW / 2 - thickness / 2;
-    const y = -outerH / 2 + b.topPct * outerH;
     ctx.beginPath();
-    ctx.roundRect(x, y, thickness, b.lenPct * outerH, thickness / 2);
+    if (b.side === 'left' || b.side === 'right') {
+      const x = b.side === 'left' ? -outerW / 2 - thickness / 2 : outerW / 2 - thickness / 2;
+      const y = -outerH / 2 + b.topPct * outerH;
+      ctx.roundRect(x, y, thickness, b.lenPct * outerH, thickness / 2);
+    } else {
+      const y = b.side === 'top' ? -outerH / 2 - thickness / 2 : outerH / 2 - thickness / 2;
+      const x = -outerW / 2 + b.topPct * outerW;
+      ctx.roundRect(x, y, b.lenPct * outerW, thickness, thickness / 2);
+    }
     ctx.fill();
   }
 }
@@ -857,6 +871,16 @@ function drawCutout(ctx: Ctx2D, spec: DeviceSpec, screenW: number, screenH: numb
     const top = -screenH / 2 + c.topPct * screenH;
     ctx.beginPath();
     ctx.roundRect(-cw / 2, top, cw, ch, ch / 2);
+    ctx.fill();
+  } else if (c.kind === 'edge-camera') {
+    // Centred along a long (portrait: vertical) edge, so the landscape base
+    // turn lands it on the top edge. Diameter and inset are fractions of the
+    // screen's SHORT side, which is screenW in portrait — using the long side
+    // would make it grow with the panel's height instead of staying a dot.
+    const d = c.dPct * screenW;
+    const x = c.edge === 'left' ? -screenW / 2 + c.insetPct * screenW + d / 2 : screenW / 2 - c.insetPct * screenW - d / 2;
+    ctx.beginPath();
+    ctx.arc(x, 0, d / 2, 0, Math.PI * 2);
     ctx.fill();
   } else {
     const d = c.dPct * screenW;

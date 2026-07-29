@@ -1,9 +1,24 @@
+// Phones and tablets are separate submission obligations in both stores, and
+// a set belongs to exactly one of them. Not an orientation — see Orientation,
+// which is per-slide and swaps the canvas rather than changing the obligation.
+export type DeviceClass = 'phone' | 'tablet';
+
 export type StoreSize = {
   id: string;
   label: string;
   store: 'ios' | 'play';
+  deviceClass: DeviceClass;
+  // PORTRAIT dimensions, always. A landscape slide renders at these swapped
+  // (orientSize); there is deliberately no landscape row per size, so each
+  // canvas has exactly one source of truth.
   width: number;
   height: number;
+  // Obligation group. Both stores accept more than one canvas for a single
+  // required slot — Apple's 13-inch iPad slot takes either 2064x2752 or
+  // 2048x2732 — so sizes sharing a group discharge ONE obligation between
+  // them, and the UI must not present them as two things to deliver.
+  // Undefined = this size is its own obligation.
+  satisfies?: string;
 };
 
 export type FontFamilyId =
@@ -172,8 +187,16 @@ export type DeviceSpec = {
   cutout:
     | { kind: 'dynamic-island'; wPct: number; hPct: number; topPct: number }
     | { kind: 'hole-punch'; dPct: number; topPct: number; xPct: number }
+    // A camera centred on one of the screen's LONG edges — how every current
+    // iPad and Android tablet places it, so it sits at the top when the device
+    // is held in landscape. Declared in portrait terms like every other spec
+    // field: `edge` is which portrait side it hugs, and the landscape base 90°
+    // turn carries it to the top ('left' rotates to the top edge).
+    | { kind: 'edge-camera'; dPct: number; edge: 'left' | 'right'; insetPct: number }
     | { kind: 'none' };
-  buttons: Array<{ side: 'left' | 'right'; topPct: number; lenPct: number }>;
+  // `topPct` is the offset along the edge the button sits on, as a fraction of
+  // that edge's length; 'top'/'bottom' buttons run horizontally.
+  buttons: Array<{ side: 'left' | 'right' | 'top' | 'bottom'; topPct: number; lenPct: number }>;
 };
 
 export type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;

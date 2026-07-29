@@ -1,22 +1,37 @@
 import type { Orientation, Slide, StoreSize } from './types';
 
+// Every width/height here is the PORTRAIT canvas. Landscape is per-slide and
+// derived by swapping (orientSize) — there are deliberately no landscape rows,
+// because a second declaration of the same canvas is a second thing to get
+// wrong, and neither store treats landscape as a separate obligation.
 export const SIZES: StoreSize[] = [
-  { id: 'ios-6.9', label: 'iPhone 6.9" (17 Pro Max)', store: 'ios', width: 1320, height: 2868 },
-  { id: 'ios-6.7', label: 'iPhone 6.7"', store: 'ios', width: 1290, height: 2796 },
-  { id: 'ios-6.5', label: 'iPhone 6.5"', store: 'ios', width: 1284, height: 2778 },
-  { id: 'ipad-13', label: 'iPad 13"', store: 'ios', width: 2064, height: 2752 },
-  { id: 'play-phone', label: 'Play phone', store: 'play', width: 1080, height: 1920 },
-  { id: 'play-tablet-10', label: 'Play tablet 10"', store: 'play', width: 1600, height: 2560 },
+  { id: 'ios-6.9', label: 'iPhone 6.9" (17 Pro Max)', store: 'ios', deviceClass: 'phone', width: 1320, height: 2868 },
+  { id: 'ios-6.7', label: 'iPhone 6.7"', store: 'ios', deviceClass: 'phone', width: 1290, height: 2796 },
+  { id: 'ios-6.5', label: 'iPhone 6.5"', store: 'ios', deviceClass: 'phone', width: 1284, height: 2778 },
+  // Apple's 13-inch iPad slot accepts either canvas, so these two share an
+  // obligation group: delivering EITHER discharges the 13-inch requirement.
+  { id: 'ipad-13', label: 'iPad 13"', store: 'ios', deviceClass: 'tablet', width: 2064, height: 2752, satisfies: 'ipad-13-class' },
+  { id: 'ipad-12.9', label: 'iPad 12.9"', store: 'ios', deviceClass: 'tablet', width: 2048, height: 2732, satisfies: 'ipad-13-class' },
+  { id: 'play-phone', label: 'Play phone', store: 'play', deviceClass: 'phone', width: 1080, height: 1920 },
+  { id: 'play-tablet-10', label: 'Play tablet 10"', store: 'play', deviceClass: 'tablet', width: 1600, height: 2560 },
 ];
-
-// Output presets offered in the export multi-select, in display order.
-// ios-6.9 and play-phone are ticked by default.
-export const EXPORT_PRESET_IDS = ['ios-6.9', 'play-phone', 'ios-6.7', 'ios-6.5', 'ipad-13'];
 
 export function getSize(id: string): StoreSize {
   const s = SIZES.find((s) => s.id === id);
   if (!s) throw new Error(`Unknown store size: ${id}`);
   return s;
+}
+
+// The obligation a size discharges. Sizes in one `satisfies` group collapse to
+// a single entry, so the UI counts obligations rather than canvases.
+export function obligationOf(size: StoreSize): string {
+  return size.satisfies ?? size.id;
+}
+
+// Distinct obligations covered by a set of preset ids — what the user actually
+// owes the store, deduped across equivalent canvases.
+export function obligationsFor(sizeIds: string[]): string[] {
+  return [...new Set(sizeIds.map((id) => obligationOf(getSize(id))))];
 }
 
 // A slide's orientation, defaulting to portrait for any project saved before

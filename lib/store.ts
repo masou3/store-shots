@@ -42,13 +42,28 @@ function newSlide(partial?: Partial<Slide>): Slide {
   };
 }
 
-// The layout a slide inserted next to `anchorId` should inherit — the anchor's
-// own, so adding a screen keeps the layout you were just looking at.
-function inheritLayout(slides: Slide[], anchorId: string): Pick<Slide, 'layout' | 'layoutId'> {
+// What a slide inserted next to `anchorId` should inherit — the anchor's own
+// layout AND orientation, so adding a screen keeps the one you were just
+// looking at. With no anchor it falls back to the set's default orientation,
+// which is how a wholly-landscape set stays landscape without touching the
+// per-slide toggle each time.
+function inheritFromAnchor(
+  slides: Slide[],
+  anchorId: string,
+  defaultOrientation?: Orientation,
+): Pick<Slide, 'layout' | 'layoutId' | 'orientation'> {
   const anchor = slides.find((s) => s.id === anchorId);
   return anchor
-    ? { layout: anchor.layout, layoutId: anchor.layoutId }
-    : { layout: slideLayoutFor(DEFAULT_LAYOUT), layoutId: DEFAULT_LAYOUT };
+    ? {
+        layout: anchor.layout,
+        layoutId: anchor.layoutId,
+        orientation: anchor.orientation ?? defaultOrientation,
+      }
+    : {
+        layout: slideLayoutFor(DEFAULT_LAYOUT),
+        layoutId: DEFAULT_LAYOUT,
+        orientation: defaultOrientation,
+      };
 }
 
 export function defaultSet(kind: StoreKind, seedText = false): SetState {
@@ -136,6 +151,7 @@ type StoreState = {
   applyPhoneGlowToAll: () => void; // broadcast the current slide's device glow to every slide
   patchLayout: (p: Partial<SlideLayout>) => void; // patches the selected slides' layout
   setSlideOrientation: (o: Orientation) => void; // portrait/landscape on the selected slides
+  setDefaultOrientation: (o: Orientation) => void; // orientation seeded onto NEW slides in this set
   patchSlide: (id: string, p: Partial<Slide>) => void;
   setBackgroundImage: (key: string) => void; // sets a bg photo on the selected slides
   clearBackgroundImage: () => void; // removes the bg photo from the selected slides
@@ -345,6 +361,9 @@ export const useStore = create<StoreState>((set, get) => {
           slides: s.slides.map((sl) => (ids.has(sl.id) ? { ...sl, orientation: o } : sl)),
         };
       }),
+    // Seed only: existing slides keep whatever they already carry, so flipping
+    // the set default never silently re-orients work already laid out.
+    setDefaultOrientation: (o) => updateActive(() => ({ defaultOrientation: o })),
     patchSlide: (id, p) =>
       updateActive((s) => ({ slides: s.slides.map((sl) => (sl.id === id ? { ...sl, ...p } : sl)) })),
     setBackgroundImage: (key) => {
@@ -459,7 +478,7 @@ export const useStore = create<StoreState>((set, get) => {
       updateActive((s) => {
         const kind = get().activeStore;
         if (!kind || s.slides.length >= capFor(kind).max) return {};
-        const slide = newSlide(inheritLayout(s.slides, s.currentSlideId));
+        const slide = newSlide(inheritFromAnchor(s.slides, s.currentSlideId, s.defaultOrientation));
         const idx = s.slides.findIndex((sl) => sl.id === s.currentSlideId);
         const slides = [...s.slides];
         slides.splice(idx + 1, 0, slide);
@@ -508,7 +527,7 @@ export const useStore = create<StoreState>((set, get) => {
       const replaced: string[] = [];
       updateActive((s) => {
         const slides = [...s.slides];
-        const inherited = inheritLayout(s.slides, s.currentSlideId);
+        const inherited = inheritFromAnchor(s.slides, s.currentSlideId, s.defaultOrientation);
         const start = Math.max(0, slides.findIndex((sl) => sl.id === s.currentSlideId));
         keys.forEach((key, i) => {
           const idx = start + i;
