@@ -17,11 +17,13 @@ import { LAYOUTS } from '@/lib/layouts';
 import { GRADIENT_PACKS } from '@/lib/presets';
 import { FONT_FAMILIES, loadRenderFonts } from '@/lib/fonts';
 import { copyWarning } from '@/lib/copyWarning';
+import { clampWarning } from '@/lib/clampWarning';
 import {
   renderSlide,
   drawSafeAreaOverlay,
   drawAlignmentGuides,
   measureSetTextZone,
+  measureSetClamp,
   zoneForSlide,
   hitRegions,
   type AlignGuide,
@@ -397,6 +399,10 @@ export default function Home() {
       saveProjectLocal,
       saveImage,
       renderSlide,
+      measureSetTextZone,
+      zoneForSlide,
+      measureSetClamp,
+      clampWarning,
       JSZip,
     };
   }, []);
@@ -515,6 +521,12 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
     : { portrait: 0, landscape: 0 };
   const setBlockH = zoneForSlide(zones, slide);
   const previewSize = slideSize(size, slide);
+  // Set-wide, not per-slide: the zone is the max across the set, so one long
+  // headline shrinks every device of that orientation. Needs real font metrics,
+  // so it waits for fontsReady like the zones themselves.
+  const clampWarn = fontsReady
+    ? clampWarning(measureSetClamp(slides, theme, size, zones).landscape ?? null)
+    : null;
 
   // Effective text look for the current slide: its per-slide override, falling
   // back to the set-wide theme.text. The look controls read/write these.
@@ -1865,6 +1877,14 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
             <p className={`font-mono text-[11px] ${capState.cls}`} data-cap={activeStore}>
               {STORE_KINDS[activeStore].label} · {capState.text}
             </p>
+            {/* Set-wide, and deliberately next to the cap readout rather than
+                the headline field: the headline driving this may be on a
+                different slide than the one being edited. */}
+            {clampWarn && (
+              <p className="text-[11px] leading-snug text-amber-400" data-clamp-warning>
+                {clampWarn}
+              </p>
+            )}
             {presetIds.map((id) => {
               const s = getSize(id);
               return (

@@ -2,6 +2,7 @@ import type {
   BackgroundPattern,
   Ctx2D,
   DeviceSpec,
+  Orientation,
   Slide,
   SlideBackground,
   SlideLayout,
@@ -9,7 +10,7 @@ import type {
   Theme,
 } from './types';
 import { getSpec } from './deviceSpecs';
-import { slideOrientation } from './sizes';
+import { orientSize, slideOrientation } from './sizes';
 import {
   fillLinearGradient,
   fillRadialGradient,
@@ -65,6 +66,13 @@ type DeviceGeometry = {
   // Degrees to counter-rotate the on-screen screenshot so app UI stays upright
   // once the frame is turned. -90 for a framed landscape slide, else 0.
   imageCounterDeg: number;
+  // Whether the text zone forced this device below its requested size, and by
+  // how much room is left before it does. Reported from the same branch that
+  // APPLIES the clamp, so a warning can never drift from the real behaviour.
+  // slot sizing has no cliff (it scales with the slot continuously), so it
+  // reports slack Infinity.
+  clamped: boolean;
+  slackPx: number;
 };
 
 let scratch: Ctx2D | null = null;
@@ -104,6 +112,64 @@ export function measureSetTextZone(slides: Slide[], theme: Theme, size: StoreSiz
 // slide's orientation. Callers hold the pair and pass the scalar per slide.
 export function zoneForSlide(zones: SetTextZones, slide: Slide): number {
   return zones[slideOrientation(slide)];
+}
+
+// How close a set is to the point where its text zone starts shrinking devices.
+export type SetClampState = {
+  orientation: Orientation;
+  clamped: boolean; // already past the cliff: devices are being shrunk
+  slackPx: number; // room left before the clamp fires, in store px
+  slackLines: number; // the same slack expressed in headline lines
+  headline: string; // the longest headline — the one actually driving the zone
+};
+
+// Bleed (crop) layouts size by width and position by bleed, so the text zone
+// normally plays NO part in how big the device is — right up until the zone
+// grows enough that the visible part of the device would collide with it. Then
+// the device shrinks. That transition is a cliff, not a ramp.
+//
+// It has to be reported set-wide because the zone is the max across the set:
+// one long headline shrinks the device on EVERY slide of that orientation,
+// including slides whose own headline is short. That connection is invisible
+// from any single slide, which is the whole reason this is surfaced.
+//
+// Slot layouts (float, angled) scale with the slot continuously and have no
+// cliff, so they are skipped rather than reported as a near miss.
+// Reported PER ORIENTATION, not as one worst-of-set: a set can mix, and the
+// two orientations have independent zones. Collapsing them would let a tight
+// portrait slide mask a landscape one that had already gone over the cliff.
+export function measureSetClamp(
+  slides: Slide[],
+  theme: Theme,
+  size: StoreSize,
+  zones: SetTextZones,
+): Partial<Record<Orientation, SetClampState>> {
+  const ctx = scratchCtx();
+  const worst: Partial<Record<Orientation, SetClampState>> = {};
+  for (const slide of slides) {
+    if (slide.layout.deviceSizing !== 'bleed') continue;
+    const o = slideOrientation(slide);
+    const oriented = orientSize(size, o);
+    const { geo, text } = computeSlideGeom(ctx, slide, theme, oriented, zoneForSlide(zones, slide));
+    if (!Number.isFinite(geo.slackPx) || text.headLineH <= 0) continue;
+    const slackLines = geo.slackPx / text.headLineH;
+    const cur = worst[o];
+    if (!cur || slackLines < cur.slackLines) {
+      // The headline blamed is the set's LONGEST for this orientation, not this
+      // slide's — that is the one the user has to shorten to get the size back.
+      const longest = slides
+        .filter((s) => slideOrientation(s) === o)
+        .reduce((a, b) => (b.headline.length > a.headline.length ? b : a), slide);
+      worst[o] = {
+        orientation: o,
+        clamped: geo.clamped,
+        slackPx: geo.slackPx,
+        slackLines,
+        headline: longest.headline,
+      };
+    }
+  }
+  return worst;
 }
 
 export type RenderOpts = {
@@ -588,6 +654,8 @@ function deviceGeometry(
 
   let outerH: number;
   let cy: number;
+  let clamped = false;
+  let slackPx = Infinity;
 
   if (layout.deviceSizing === 'bleed') {
     const reqW = Math.min(layout.deviceWidthPct * layout.deviceScale, DEVICE_MAX_WIDTH_PCT) * w;
@@ -598,7 +666,12 @@ function deviceGeometry(
     // to 0 so the device shrinks to nothing rather than going negative — a
     // negative outerH would flip the body and throw on the button roundRect.
     const available = Math.max(0, layout.textPosition === 'top' ? h - slotTop : slotBottom);
-    if ((1 - bleed) * outerH * bboxHFactor > available) {
+    // Requested visible height BEFORE any clamp — the difference is exactly the
+    // cliff the editor warns about, so both read the same two numbers.
+    const requiredVisible = (1 - bleed) * outerH * bboxHFactor;
+    slackPx = available - requiredVisible;
+    clamped = requiredVisible > available;
+    if (clamped) {
       outerH = available / (1 - bleed) / bboxHFactor;
     }
     const bboxH = outerH * bboxHFactor;
@@ -634,6 +707,8 @@ function deviceGeometry(
     bboxH: outerH * bboxHFactor,
     rotationDeg,
     imageCounterDeg: framedLandscape ? -90 : 0,
+    clamped,
+    slackPx,
   };
 }
 
