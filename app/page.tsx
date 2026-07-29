@@ -524,9 +524,18 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
   // Set-wide, not per-slide: the zone is the max across the set, so one long
   // headline shrinks every device of that orientation. Needs real font metrics,
   // so it waits for fontsReady like the zones themselves.
-  const clampWarn = fontsReady
-    ? clampWarning(measureSetClamp(slides, theme, size, zones).landscape ?? null)
-    : null;
+  // Worst of the two orientations. No longer landscape-only: keying the warning
+  // off surviving device size instead of "did the clamp engage" is what let the
+  // orientation exemption go, since a healthy-looking clamped set now scores
+  // above the threshold on its own merits rather than by being excused.
+  const clampWarn = (() => {
+    if (!fontsReady) return null;
+    const st = measureSetClamp(slides, theme, size, zones);
+    const worst = [st.landscape, st.portrait]
+      .filter((s): s is NonNullable<typeof s> => !!s)
+      .sort((a, b) => a.shrinkRatio - b.shrinkRatio)[0];
+    return clampWarning(worst ?? null);
+  })();
 
   // Effective text look for the current slide: its per-slide override, falling
   // back to the set-wide theme.text. The look controls read/write these.

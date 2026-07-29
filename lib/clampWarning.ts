@@ -1,27 +1,33 @@
 import type { SetClampState } from './render';
 
-// Crop layouts hold the device at a fixed size and position no matter how long
-// the headline is — until the set-wide text zone grows enough to collide with
-// it, at which point every device in the set shrinks at once. Warning only,
-// never blocking: a shrunk device is a design regression, not an invalid
-// export, and the right fix is a shorter headline rather than a blocked button.
+// Crop layouts hold the device at a fixed size no matter how long the headline
+// gets — until the set-wide text zone grows enough to collide with it, and then
+// the device shrinks on EVERY slide of that orientation at once. Warning only,
+// never blocking: a small device is a design regression, not an invalid export.
 //
 // Same shape as copyWarning: pure, returns a sentence or null.
 
-// Warn while there is still under one line of headroom. Earlier than that and
-// it fires on healthy sets and gets ignored; later and the damage is done.
-const WARN_WITHIN_LINES = 1;
-
-// LANDSCAPE ONLY, deliberately. The clamp is orientation-agnostic and
-// measureSetClamp reports it for portrait too, but portrait must not warn:
-// the shipped Play phone canvas (1080x1920, Pixel frame) is ALREADY clamped
-// at ordinary two-line marketing headlines — measured at -1.48 lines of slack
-// with the set this app was built on. That configuration has shipped, the
-// devices still land identically across the set, and it looks right; a warning
-// on it would fire on every existing project and train people to ignore the
-// banner before it ever reaches the case it was built for. Landscape is where
-// the cliff is both new and steep enough to be worth interrupting someone over.
-const WARN_ORIENTATIONS = new Set(['landscape']);
+// Keyed off SURVIVING DEVICE SIZE, not off whether the clamp engaged.
+//
+// Whether the clamp fired says nothing about whether the slide looks wrong.
+// Rendered and inspected on a portrait iPad at six headline lengths:
+//
+//   100%  1-2 lines   device fills the frame           fine
+//    80%  3 lines     visibly smaller, still a hero    fine
+//    57%  4 lines     dwarfed by dead background       WRONG
+//    23%  5 lines     a stub at the canvas edge        broken
+//     0%  7 lines     no device, text off-canvas       broken
+//
+// 80% reads as a deliberate composition; 57% reads as a mistake. The threshold
+// sits between them. It is a judgement about how it LOOKS, made by looking —
+// there is no measurement that yields it.
+//
+// This also settles the shipped Play phone canvas, which has been clamped all
+// along at ordinary two-line headlines and looks right: measured, it keeps 90%
+// of its requested size, so it sits well above the line and no longer needs an
+// orientation-specific exemption to stay quiet. Warning on `clamped` would have
+// fired on it; warning on size does not.
+const MIN_DEVICE_FRACTION = 0.7;
 
 // Long headlines get elided so the sentence stays readable in the sidebar.
 function quote(headline: string): string {
@@ -31,23 +37,14 @@ function quote(headline: string): string {
 }
 
 export function clampWarning(state: SetClampState | null): string | null {
-  if (!state) return null;
-  if (!WARN_ORIENTATIONS.has(state.orientation)) return null;
+  if (!state || state.shrinkRatio >= MIN_DEVICE_FRACTION) return null;
+  const pct = Math.round(state.shrinkRatio * 100);
   const where = state.orientation;
-
-  if (state.clamped) {
-    return (
-      `${quote(state.headline)} has outgrown the ${where} text zone, so the device on ` +
-      `EVERY ${where} screen has shrunk to make room — not just that one. The zone is ` +
-      `measured across the whole set. Shorten it to put them back to full size.`
-    );
-  }
-  if (state.slackLines < WARN_WITHIN_LINES) {
-    return (
-      `About one more line on ${quote(state.headline)} and the device on every ` +
-      `${where} screen shrinks together, not just that one — the text zone is measured ` +
-      `across the whole set.`
-    );
-  }
-  return null;
+  const scale = pct <= 25 ? 'barely visible' : 'much smaller than intended';
+  return (
+    `${quote(state.headline)} is long enough that the device on EVERY ${where} ` +
+    `screen has shrunk to ${pct}% of full size to make room — ${scale}, and not just ` +
+    `on that slide. The text zone is measured across the whole set. Shorten it, or ` +
+    `move that screen to a layout with the text beside the device.`
+  );
 }

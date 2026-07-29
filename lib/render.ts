@@ -66,13 +66,19 @@ type DeviceGeometry = {
   // Degrees to counter-rotate the on-screen screenshot so app UI stays upright
   // once the frame is turned. -90 for a framed landscape slide, else 0.
   imageCounterDeg: number;
-  // Whether the text zone forced this device below its requested size, and by
-  // how much room is left before it does. Reported from the same branch that
-  // APPLIES the clamp, so a warning can never drift from the real behaviour.
-  // slot sizing has no cliff (it scales with the slot continuously), so it
-  // reports slack Infinity.
+  // Whether the text zone forced this device below its requested size, and how
+  // much of that size survived (1 = untouched). Reported from the same branch
+  // that APPLIES the clamp, so a warning can never drift from real behaviour.
+  // slot sizing has no cliff — it scales with the slot continuously — so it
+  // reports slack Infinity and ratio 1.
+  //
+  // shrinkRatio is the number worth acting on. Whether the clamp ENGAGED turns
+  // out to say nothing about whether the result looks wrong: a device at 80% of
+  // its requested size is still a convincing hero, and the shipped Play phone
+  // canvas has been clamped all along without anyone noticing.
   clamped: boolean;
   slackPx: number;
+  shrinkRatio: number;
 };
 
 let scratch: Ctx2D | null = null;
@@ -114,12 +120,15 @@ export function zoneForSlide(zones: SetTextZones, slide: Slide): number {
   return zones[slideOrientation(slide)];
 }
 
-// How close a set is to the point where its text zone starts shrinking devices.
+// How much the set-wide text zone has cost the devices in this set.
 export type SetClampState = {
   orientation: Orientation;
-  clamped: boolean; // already past the cliff: devices are being shrunk
+  clamped: boolean; // the clamp engaged at all — diagnostic, NOT a warning trigger
   slackPx: number; // room left before the clamp fires, in store px
   slackLines: number; // the same slack expressed in headline lines
+  // Smallest surviving fraction of requested device size across the set, 0..1.
+  // This is the one to act on: it measures what a person can actually see.
+  shrinkRatio: number;
   headline: string; // the longest headline — the one actually driving the zone
 };
 
@@ -154,7 +163,8 @@ export function measureSetClamp(
     if (!Number.isFinite(geo.slackPx) || text.headLineH <= 0) continue;
     const slackLines = geo.slackPx / text.headLineH;
     const cur = worst[o];
-    if (!cur || slackLines < cur.slackLines) {
+    // Ranked by surviving device size, since that is what the warning keys off.
+    if (!cur || geo.shrinkRatio < cur.shrinkRatio) {
       // The headline blamed is the set's LONGEST for this orientation, not this
       // slide's — that is the one the user has to shorten to get the size back.
       const longest = slides
@@ -165,6 +175,7 @@ export function measureSetClamp(
         clamped: geo.clamped,
         slackPx: geo.slackPx,
         slackLines,
+        shrinkRatio: geo.shrinkRatio,
         headline: longest.headline,
       };
     }
@@ -656,6 +667,7 @@ function deviceGeometry(
   let cy: number;
   let clamped = false;
   let slackPx = Infinity;
+  let shrinkRatio = 1;
 
   if (layout.deviceSizing === 'bleed') {
     const reqW = Math.min(layout.deviceWidthPct * layout.deviceScale, DEVICE_MAX_WIDTH_PCT) * w;
@@ -672,7 +684,9 @@ function deviceGeometry(
     slackPx = available - requiredVisible;
     clamped = requiredVisible > available;
     if (clamped) {
+      const requested = outerH;
       outerH = available / (1 - bleed) / bboxHFactor;
+      shrinkRatio = requested > 0 ? outerH / requested : 1;
     }
     const bboxH = outerH * bboxHFactor;
     cy =
@@ -709,6 +723,7 @@ function deviceGeometry(
     imageCounterDeg: framedLandscape ? -90 : 0,
     clamped,
     slackPx,
+    shrinkRatio,
   };
 }
 
