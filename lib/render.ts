@@ -811,8 +811,13 @@ function drawDevice(
 
   drawCutout(ctx, spec, screenW, screenH);
 
-  if (spec.id !== 'none') {
+  if (spec.id !== 'none' && outerW > spec.body.edgeWidth && outerH > spec.body.edgeWidth) {
     // Inner stroke: inset by half the line width so the edge hugs the body.
+    // The bleed clamp can shrink a device toward nothing (a long headline on a
+    // short landscape canvas), and once the body is thinner than the stroke
+    // both the inset rect and `outerRadius - inset` go negative — roundRect
+    // throws on a negative radius, killing the whole export. Below that size
+    // the stroke is sub-pixel anyway, so skip it and floor the radius at 0.
     const inset = spec.body.edgeWidth / 2;
     ctx.beginPath();
     ctx.roundRect(
@@ -820,7 +825,7 @@ function drawDevice(
       -outerH / 2 + inset,
       outerW - 2 * inset,
       outerH - 2 * inset,
-      outerRadius - inset,
+      Math.max(0, outerRadius - inset),
     );
     ctx.strokeStyle = spec.body.edge;
     ctx.lineWidth = spec.body.edgeWidth;
