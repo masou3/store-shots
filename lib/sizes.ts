@@ -1,4 +1,4 @@
-import type { StoreSize } from './types';
+import type { Orientation, Slide, StoreSize } from './types';
 
 export const SIZES: StoreSize[] = [
   { id: 'ios-6.9', label: 'iPhone 6.9" (17 Pro Max)', store: 'ios', width: 1320, height: 2868 },
@@ -17,6 +17,27 @@ export function getSize(id: string): StoreSize {
   const s = SIZES.find((s) => s.id === id);
   if (!s) throw new Error(`Unknown store size: ${id}`);
   return s;
+}
+
+// A slide's orientation, defaulting to portrait for any project saved before
+// landscape existed (the field is optional and absent on those slides).
+export function slideOrientation(slide: Slide): Orientation {
+  return slide.orientation ?? 'portrait';
+}
+
+// The actual canvas dimensions a slide renders at: the set's size for portrait,
+// its W/H swapped for landscape. The output PNG for a landscape 6.9" slide is
+// 2868x1320. Both stores accept this under the same size bucket as its portrait
+// siblings, so validateSize (which is W/H-order-invariant) still passes.
+export function orientSize(size: StoreSize, orientation: Orientation): StoreSize {
+  return orientation === 'landscape'
+    ? { ...size, width: size.height, height: size.width }
+    : size;
+}
+
+// The canvas size for a specific slide within a set of the given size.
+export function slideSize(size: StoreSize, slide: Slide): StoreSize {
+  return orientSize(size, slideOrientation(slide));
 }
 
 // Store upload rules, encoded as validation. Only rules with a published

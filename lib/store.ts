@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Slide, SlideBackground, SlideLayout, TextStyleOverride, Theme } from './types';
+import type { Orientation, Slide, SlideBackground, SlideLayout, TextStyleOverride, Theme } from './types';
 import { applyLayout, getLayout, slideLayoutFor, type LayoutId } from './layouts';
 import { clearAllImages, ensureBitmap, getImageBlob, removeImage, saveImage } from './imageStore';
 import { STORE_KINDS, capFor, otherStore, type StoreKind } from './storeKinds';
@@ -135,6 +135,7 @@ type StoreState = {
   applyTextStyleToAll: () => void; // broadcast the current slide's text look to every slide
   applyPhoneGlowToAll: () => void; // broadcast the current slide's device glow to every slide
   patchLayout: (p: Partial<SlideLayout>) => void; // patches the selected slides' layout
+  setSlideOrientation: (o: Orientation) => void; // portrait/landscape on the selected slides
   patchSlide: (id: string, p: Partial<Slide>) => void;
   setBackgroundImage: (key: string) => void; // sets a bg photo on the selected slides
   clearBackgroundImage: () => void; // removes the bg photo from the selected slides
@@ -335,6 +336,13 @@ export const useStore = create<StoreState>((set, get) => {
           slides: s.slides.map((sl) =>
             ids.has(sl.id) ? { ...sl, layout: { ...sl.layout, ...p } } : sl,
           ),
+        };
+      }),
+    setSlideOrientation: (o) =>
+      updateActive((s) => {
+        const ids = new Set(targetIds(s));
+        return {
+          slides: s.slides.map((sl) => (ids.has(sl.id) ? { ...sl, orientation: o } : sl)),
         };
       }),
     patchSlide: (id, p) =>

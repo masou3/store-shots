@@ -9,6 +9,7 @@ import type {
   Theme,
 } from './types';
 import { getSpec } from './deviceSpecs';
+import { slideOrientation } from './sizes';
 import {
   fillLinearGradient,
   fillRadialGradient,
@@ -57,6 +58,13 @@ type DeviceGeometry = {
   screenW: number;
   screenH: number;
   bboxW: number; // width of the rotated bounding box, for hero-span positioning
+  bboxH: number; // height of the rotated bounding box, for drag hit-testing
+  // Total device rotation to draw at, in degrees: the base 90° that turns a
+  // landscape phone on its side, plus the user's tilt. Portrait = just the tilt.
+  rotationDeg: number;
+  // Degrees to counter-rotate the on-screen screenshot so app UI stays upright
+  // once the frame is turned. -90 for a framed landscape slide, else 0.
+  imageCounterDeg: number;
 };
 
 let scratch: Ctx2D | null = null;
@@ -69,18 +77,33 @@ function scratchCtx(): Ctx2D {
   return scratch;
 }
 
-// Max text block height across the whole set, computed per output size (type
-// is a fraction of canvas width, so the max differs per canvas). renderSlide
-// takes the result instead of measuring the slide in front of it, so every
-// slide in a set uses one text zone and devices land identically regardless
-// of individual headline length. Fonts must be loaded before calling.
-export function measureSetTextZone(slides: Slide[], theme: Theme, size: StoreSize): number {
+// Max text block height across the whole set — but split by orientation. Type
+// is a fraction of canvas width, and a landscape slide is far wider than its
+// portrait siblings, so the two orientations land on different zones. Each
+// slide uses the zone for its own orientation, so devices land identically
+// across every slide of that orientation regardless of headline length. A
+// portrait-only set simply leaves `landscape` at 0. Fonts must be loaded first.
+export type SetTextZones = { portrait: number; landscape: number };
+
+export function measureSetTextZone(slides: Slide[], theme: Theme, size: StoreSize): SetTextZones {
   const ctx = scratchCtx();
-  let max = 0;
+  const zones: SetTextZones = { portrait: 0, landscape: 0 };
+  // Type scales off the short side (portrait width) in both orientations, so a
+  // landscape headline is the same optical size as a portrait one.
+  const typeW = Math.min(size.width, size.height);
   for (const s of slides) {
-    max = Math.max(max, layoutText(ctx, s, theme, size.width).blockH);
+    const o = slideOrientation(s);
+    // Landscape wraps against the swapped (wider) canvas width.
+    const w = o === 'landscape' ? size.height : size.width;
+    zones[o] = Math.max(zones[o], layoutText(ctx, s, theme, w, typeW).blockH);
   }
-  return max;
+  return zones;
+}
+
+// The zone a single slide should use, picked from the set-wide pair by the
+// slide's orientation. Callers hold the pair and pass the scalar per slide.
+export function zoneForSlide(zones: SetTextZones, slide: Slide): number {
+  return zones[slideOrientation(slide)];
 }
 
 export type RenderOpts = {
@@ -118,7 +141,9 @@ function computeSlideGeom(
   const w = size.width;
   const h = size.height;
   const layout = slide.layout;
-  const text = layoutText(ctx, slide, theme, w);
+  // size here is already oriented; the short side is the type reference so text
+  // stays optically consistent with the set's portrait slides.
+  const text = layoutText(ctx, slide, theme, w, Math.min(w, h));
   const insetY = h * (layout.textInsetPct / 100);
   const gap = h * TEXT_DEVICE_GAP_PCT;
   const zoneH = insetY + (setBlockH ?? text.blockH) + gap;
@@ -127,7 +152,16 @@ function computeSlideGeom(
   const blockTopBase = layout.textPosition === 'top' ? insetY : h - insetY - text.blockH;
   const blockTop = blockTopBase + (layout.textOffsetY ?? 0);
   const bmp = slide.imageKey ? getBitmap(slide.imageKey) : null;
-  const geo = deviceGeometry(theme, layout, size, slotTop, slotBottom, bmp ? bmp.width / bmp.height : null);
+  const landscape = slideOrientation(slide) === 'landscape';
+  const geo = deviceGeometry(
+    theme,
+    layout,
+    size,
+    slotTop,
+    slotBottom,
+    bmp ? bmp.width / bmp.height : null,
+    landscape,
+  );
   const overlap = layout.overlapNext ?? 0;
   if (overlap > 0) {
     // Right edge lands at w + overlap*bboxW, so that fraction hangs into the
@@ -205,10 +239,8 @@ export function hitRegions(
 ): HitRegions {
   const ctx = scratchCtx();
   const { text, blockTop, geo } = computeSlideGeom(ctx, slide, theme, size, opts.setBlockH);
-  const theta = (Math.abs(slide.layout.deviceRotation) * Math.PI) / 180;
-  const bboxH = geo.outerW * Math.sin(theta) + geo.outerH * Math.cos(theta);
   return {
-    device: { cx: geo.cx, cy: geo.cy, w: geo.bboxW, h: bboxH },
+    device: { cx: geo.cx, cy: geo.cy, w: geo.bboxW, h: geo.bboxH },
     text: {
       x: (size.width - text.maxW) / 2 + (slide.layout.textOffsetX ?? 0),
       y: blockTop,
@@ -443,10 +475,22 @@ function drawPattern(ctx: Ctx2D, pattern: BackgroundPattern, w: number, h: numbe
   ctx.restore();
 }
 
-function layoutText(ctx: Ctx2D, slide: Slide, theme: Theme, w: number): TextLayout {
+// `w` is the canvas width the text wraps against. `typeW` is the reference the
+// font SIZE scales from — the same across orientations (the short side of the
+// canvas, i.e. the portrait width), so a headline reads at the same optical
+// size on a landscape slide as on its portrait siblings. Without this a
+// landscape headline would be ~2x too big (a fraction of the wide side) and
+// overflow the short canvas. Defaults to `w` for the portrait case.
+function layoutText(
+  ctx: Ctx2D,
+  slide: Slide,
+  theme: Theme,
+  w: number,
+  typeW: number = w,
+): TextLayout {
   const t = theme.text;
   const family = resolveFontFamily(t.family);
-  const headSize = w * (t.sizePct / 100);
+  const headSize = typeW * (t.sizePct / 100);
   const maxW = Math.min(w * (t.maxWidthPct / 100), w * (1 - 2 * SAFE_AREA_PCT));
 
   const headlineFont = `${t.weight} ${headSize}px ${family}`;
@@ -505,6 +549,7 @@ function deviceGeometry(
   slotTop: number,
   slotBottom: number,
   sourceAspect: number | null,
+  landscape: boolean,
 ): DeviceGeometry {
   const spec = getSpec(theme.frameId);
   const w = size.width;
@@ -512,7 +557,10 @@ function deviceGeometry(
   // 'none' means no bezel, not no device: the rect takes the SOURCE image's
   // own aspect so the only crop is the layout's bleed — never the canvas
   // aspect, which would stack a second cover-fit crop on top. With no image
-  // loaded it borrows the last-selected device's screen aspect.
+  // loaded it borrows the last-selected device's screen aspect. A frameless
+  // landscape slide needs no 90° turn — the wide capture IS the landscape
+  // rect — so only a real bezel gets the base rotation.
+  const framedLandscape = landscape && spec.id !== 'none';
   const screenAspect =
     spec.id === 'none' ? (sourceAspect ?? noneFallbackAspect(theme)) : spec.screenAspect;
   const b = spec.bezelPct; // fraction of screen width
@@ -520,9 +568,15 @@ function deviceGeometry(
   const kW = 1 + 2 * b; // outerW = screenW * kW
   const bodyAspect = kW / kH; // outerW = outerH * bodyAspect
 
-  const theta = (Math.abs(layout.deviceRotation) * Math.PI) / 180;
-  const sin = Math.sin(theta);
-  const cos = Math.cos(theta);
+  // Landscape lays a real phone on its side: a 90° base turn, plus the user's
+  // tilt on top. The bounding box is what fits into the slot/width, so its
+  // extents must use |sin|/|cos| — past 90° cos goes negative and the raw
+  // factors would shrink the box instead of growing it.
+  const baseRot = framedLandscape ? 90 : 0;
+  const rotationDeg = baseRot + layout.deviceRotation;
+  const theta = (rotationDeg * Math.PI) / 180;
+  const sin = Math.abs(Math.sin(theta));
+  const cos = Math.abs(Math.cos(theta));
   // Rotated bounding box of the body, per unit of outerH.
   const bboxHFactor = bodyAspect * sin + cos;
   const bboxWFactor = bodyAspect * cos + sin;
@@ -535,8 +589,11 @@ function deviceGeometry(
     const reqW = Math.min(layout.deviceWidthPct * layout.deviceScale, DEVICE_MAX_WIDTH_PCT) * w;
     outerH = reqW / bboxWFactor;
     const bleed = layout.deviceBleed;
-    // Visible height above (below) the bled edge must clear the text zone.
-    const available = layout.textPosition === 'top' ? h - slotTop : slotBottom;
+    // Visible height above (below) the bled edge must clear the text zone. A
+    // long headline on a short (landscape) canvas can eat the whole slot; clamp
+    // to 0 so the device shrinks to nothing rather than going negative — a
+    // negative outerH would flip the body and throw on the button roundRect.
+    const available = Math.max(0, layout.textPosition === 'top' ? h - slotTop : slotBottom);
     if ((1 - bleed) * outerH * bboxHFactor > available) {
       outerH = available / (1 - bleed) / bboxHFactor;
     }
@@ -546,7 +603,7 @@ function deviceGeometry(
         ? h + bleed * bboxH - bboxH / 2
         : -bleed * bboxH + bboxH / 2;
   } else {
-    const slotH = slotBottom - slotTop;
+    const slotH = Math.max(0, slotBottom - slotTop);
     outerH = (slotH * layout.deviceFill * layout.deviceScale) / bboxHFactor;
     if (outerH * bboxWFactor > maxW) {
       outerH = maxW / bboxWFactor;
@@ -570,6 +627,9 @@ function deviceGeometry(
     screenW,
     screenH: screenW / screenAspect,
     bboxW: outerH * bboxWFactor,
+    bboxH: outerH * bboxHFactor,
+    rotationDeg,
+    imageCounterDeg: framedLandscape ? -90 : 0,
   };
 }
 
@@ -662,7 +722,10 @@ function drawDevice(
 
   ctx.save();
   ctx.translate(geo.cx, geo.cy);
-  ctx.rotate((layout.deviceRotation * Math.PI) / 180);
+  // rotationDeg already carries the landscape base 90° plus the user's tilt, so
+  // body, buttons, screen and cutout all turn together — a real phone on its
+  // side, island and buttons landing on the correct edges.
+  ctx.rotate((geo.rotationDeg * Math.PI) / 180);
 
   const outerRadius = spec.outerRadiusPct * outerW;
 
@@ -727,13 +790,22 @@ function drawDevice(
   ctx.fillStyle = SCREEN_PLACEHOLDER_FILL;
   ctx.fillRect(-screenW / 2, -screenH / 2, screenW, screenH);
   if (bmp) {
+    ctx.save();
+    // Landscape: counter-rotate the capture by -90° (undoing the frame's turn)
+    // so app UI reads upright. In that rotated frame the screen rect's fill
+    // extents swap — the wide capture then covers the wide-on-canvas screen
+    // with matched aspect. Portrait (imageCounterDeg 0) is unchanged.
+    if (geo.imageCounterDeg) ctx.rotate((geo.imageCounterDeg * Math.PI) / 180);
+    const rw = geo.imageCounterDeg ? screenH : screenW;
+    const rh = geo.imageCounterDeg ? screenW : screenH;
     const s =
       layout.imageFit === 'contain'
-        ? Math.min(screenW / bmp.width, screenH / bmp.height)
-        : Math.max(screenW / bmp.width, screenH / bmp.height);
+        ? Math.min(rw / bmp.width, rh / bmp.height)
+        : Math.max(rw / bmp.width, rh / bmp.height);
     const dw = bmp.width * s;
     const dh = bmp.height * s;
     ctx.drawImage(bmp, -dw / 2, -dh / 2, dw, dh);
+    ctx.restore();
   }
   ctx.restore();
 

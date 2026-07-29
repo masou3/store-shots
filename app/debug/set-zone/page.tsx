@@ -1,16 +1,21 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import type { Slide, SlideLayout, Theme } from '@/lib/types';
-import { getSize } from '@/lib/sizes';
+import type { Orientation, Slide, SlideLayout, Theme } from '@/lib/types';
+import { getSize, slideSize } from '@/lib/sizes';
 import { slideLayoutFor } from '@/lib/layouts';
 import { loadRenderFonts } from '@/lib/fonts';
-import { measureSetTextZone, renderSlide } from '@/lib/render';
+import { measureSetTextZone, renderSlide, zoneForSlide } from '@/lib/render';
 
 // Automated set-wide text zone assertion: a 3-slide set at one, two and
 // three-line headlines must put the device at IDENTICAL size and position on
 // every slide, on both canvases. Renders at scale = 1 offscreen and measures
 // the device body from actual pixels — no reasoning, no preview involved.
+//
+// Now split by orientation: the zone is measured per orientation, so slides of
+// the SAME orientation must still land identically. A portrait row and a
+// landscape row of the same set are measured independently — the point is that
+// mixing does not disturb either group's own set-wide zone.
 
 const HEADLINES = [
   'Track every rep.',
@@ -42,6 +47,7 @@ const LAYOUT: SlideLayout = slideLayoutFor('top-text-crop');
 
 type Measurement = {
   sizeId: string;
+  orientation: Orientation;
   slide: number;
   top: number;
   left: number;
@@ -89,37 +95,60 @@ export default function SetZoneDebugPage() {
   useEffect(() => {
     (async () => {
       await loadRenderFonts();
-      const slides: Slide[] = HEADLINES.map((h, i) => ({
-        id: `set-zone-${i}`,
-        headline: h,
-        subhead: i === 0 ? 'Sets, reps and PRs logged in one tap.' : undefined,
-        layout: LAYOUT,
-        layoutId: 'top-text-crop',
-      }));
+      // A mixed set: each headline in BOTH orientations, one shared set. The
+      // zone is measured across the whole mixed set, so this proves a portrait
+      // and a landscape slide coexisting never disturbs either group's zone.
+      const orientations: Orientation[] = ['portrait', 'landscape'];
+      const slides: Slide[] = orientations.flatMap((orientation) =>
+        HEADLINES.map((h, i) => ({
+          id: `set-zone-${orientation}-${i}`,
+          headline: h,
+          subhead: i === 0 ? 'Sets, reps and PRs logged in one tap.' : undefined,
+          layout: LAYOUT,
+          layoutId: 'top-text-crop' as const,
+          orientation,
+        })),
+      );
       const out: Measurement[] = [];
       for (const sizeId of ['ios-6.9', 'play-phone']) {
         const size = getSize(sizeId);
-        const setBlockH = measureSetTextZone(slides, THEME, size);
-        for (const [i, slide] of slides.entries()) {
-          const c = new OffscreenCanvas(size.width, size.height);
+        const zones = measureSetTextZone(slides, THEME, size);
+        for (const slide of slides) {
+          const oriented = slideSize(size, slide);
+          const c = new OffscreenCanvas(oriented.width, oriented.height);
           const ctx = c.getContext('2d');
           if (!ctx) continue;
-          renderSlide(ctx, slide, THEME, size, 1, { setBlockH });
-          out.push({ sizeId, slide: i + 1, ...measureDevice(ctx, size.width, size.height) });
+          renderSlide(ctx, slide, THEME, oriented, 1, { setBlockH: zoneForSlide(zones, slide) });
+          const i = HEADLINES.indexOf(slide.headline);
+          out.push({
+            sizeId,
+            orientation: slide.orientation ?? 'portrait',
+            slide: i + 1,
+            ...measureDevice(ctx, oriented.width, oriented.height),
+          });
         }
       }
       setRows(out);
     })();
   }, []);
 
-  const verdict = (sizeId: string): string => {
+  // Each (canvas, orientation) group must land identically across headlines.
+  const verdict = (sizeId: string, orientation: Orientation): string => {
     if (!rows) return '…';
-    const r = rows.filter((r) => r.sizeId === sizeId);
+    const r = rows.filter((m) => m.sizeId === sizeId && m.orientation === orientation);
+    if (r.length === 0) return 'no rows';
     const same = r.every(
       (m) => m.top === r[0].top && m.left === r[0].left && m.right === r[0].right,
     );
     return same ? 'PASS — identical' : 'FAIL — devices move between slides';
   };
+
+  const groups: Array<{ sizeId: string; orientation: Orientation }> = [
+    { sizeId: 'ios-6.9', orientation: 'portrait' },
+    { sizeId: 'ios-6.9', orientation: 'landscape' },
+    { sizeId: 'play-phone', orientation: 'portrait' },
+    { sizeId: 'play-phone', orientation: 'landscape' },
+  ];
 
   return (
     <div className="p-8">
@@ -133,10 +162,13 @@ export default function SetZoneDebugPage() {
         <p className="text-xs text-neutral-500">measuring…</p>
       ) : (
         <div id="results" data-results={JSON.stringify(rows)}>
-          {(['ios-6.9', 'play-phone'] as const).map((sizeId) => (
-            <div key={sizeId} className="mb-6">
+          {groups.map(({ sizeId, orientation }) => (
+            <div key={`${sizeId}-${orientation}`} className="mb-6">
               <h2 className="mb-1 font-mono text-xs text-neutral-300">
-                {sizeId}: <span data-verdict={sizeId}>{verdict(sizeId)}</span>
+                {sizeId} · {orientation}:{' '}
+                <span data-verdict={`${sizeId}-${orientation}`}>
+                  {verdict(sizeId, orientation)}
+                </span>
               </h2>
               <table className="font-mono text-xs text-neutral-400">
                 <thead>
@@ -150,7 +182,7 @@ export default function SetZoneDebugPage() {
                 </thead>
                 <tbody>
                   {rows
-                    .filter((r) => r.sizeId === sizeId)
+                    .filter((r) => r.sizeId === sizeId && r.orientation === orientation)
                     .map((r) => (
                       <tr key={r.slide}>
                         <td className="pr-4">{r.slide}</td>

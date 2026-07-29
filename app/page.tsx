@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DragEvent } from 'react';
-import type { Slide, SlideLayout, StoreSize, Theme } from '@/lib/types';
-import { getSize } from '@/lib/sizes';
+import type { Orientation, Slide, SlideLayout, StoreSize, Theme } from '@/lib/types';
+import { getSize, slideOrientation, slideSize } from '@/lib/sizes';
 import {
   STORE_KINDS,
   STORE_ORDER,
@@ -22,8 +22,10 @@ import {
   drawSafeAreaOverlay,
   drawAlignmentGuides,
   measureSetTextZone,
+  zoneForSlide,
   hitRegions,
   type AlignGuide,
+  type SetTextZones,
 } from '@/lib/render';
 import JSZip from 'jszip';
 import { exportSlidePng, downloadBlob } from '@/lib/export';
@@ -146,7 +148,7 @@ function Thumb({
   slideCount,
   theme,
   size,
-  setBlockH,
+  zones,
   spillPrev,
   selected,
   fontsReady,
@@ -160,7 +162,7 @@ function Thumb({
   slideCount: number;
   theme: Theme;
   size: StoreSize;
-  setBlockH: number;
+  zones: SetTextZones;
   spillPrev?: Slide;
   selected: boolean;
   fontsReady: boolean;
@@ -176,7 +178,9 @@ function Thumb({
     if (!fontsReady) return;
     const canvas = ref.current;
     if (!canvas) return;
-    const aspect = size.width / size.height;
+    // Landscape thumbs are wider than tall — each derives its own aspect.
+    const oriented = slideSize(size, slide);
+    const aspect = oriented.width / oriented.height;
     const cssW = CSS_H * aspect;
     const dpr = window.devicePixelRatio || 1;
     canvas.style.width = `${cssW}px`;
@@ -185,13 +189,13 @@ function Thumb({
     canvas.height = Math.round(CSS_H * dpr);
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    renderSlide(ctx, slide, theme, size, canvas.width / size.width, {
-      setBlockH,
+    renderSlide(ctx, slide, theme, oriented, canvas.width / oriented.width, {
+      setBlockH: zoneForSlide(zones, slide),
       slideIndex: index,
       slideCount,
       spillPrev,
     });
-  }, [slide, index, slideCount, theme, size, setBlockH, spillPrev, fontsReady, imageVersion]);
+  }, [slide, index, slideCount, theme, size, zones, spillPrev, fontsReady, imageVersion]);
 
   return (
     <div
@@ -247,7 +251,7 @@ function RowSlide({
   slideCount,
   theme,
   size,
-  setBlockH,
+  zones,
   spillPrev,
   cssH,
   selected,
@@ -260,7 +264,7 @@ function RowSlide({
   slideCount: number;
   theme: Theme;
   size: StoreSize;
-  setBlockH: number;
+  zones: SetTextZones;
   spillPrev?: Slide;
   cssH: number;
   selected: boolean;
@@ -274,7 +278,9 @@ function RowSlide({
     if (!fontsReady || cssH <= 0) return;
     const canvas = ref.current;
     if (!canvas) return;
-    const aspect = size.width / size.height;
+    // Each row slide gets its own orientation's aspect at the shared row height.
+    const oriented = slideSize(size, slide);
+    const aspect = oriented.width / oriented.height;
     const cssW = cssH * aspect;
     const dpr = window.devicePixelRatio || 1;
     canvas.style.width = `${cssW}px`;
@@ -283,13 +289,13 @@ function RowSlide({
     canvas.height = Math.round(cssH * dpr);
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    renderSlide(ctx, slide, theme, size, canvas.width / size.width, {
-      setBlockH,
+    renderSlide(ctx, slide, theme, oriented, canvas.width / oriented.width, {
+      setBlockH: zoneForSlide(zones, slide),
       slideIndex: index,
       slideCount,
       spillPrev,
     });
-  }, [slide, index, slideCount, theme, size, setBlockH, spillPrev, cssH, fontsReady, imageVersion]);
+  }, [slide, index, slideCount, theme, size, zones, spillPrev, cssH, fontsReady, imageVersion]);
 
   return (
     <div
@@ -460,6 +466,7 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
     applyTextStyleToAll,
     applyPhoneGlowToAll,
     patchLayout,
+    setSlideOrientation,
     patchSlide,
     setBackgroundImage,
     clearBackgroundImage,
@@ -501,7 +508,13 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
   const size = getSize(sizeId);
   const slide = slides.find((s) => s.id === currentSlideId) ?? slides[0];
   const currentIndex = slides.indexOf(slide);
-  const setBlockH = fontsReady ? measureSetTextZone(slides, theme, size) : 0;
+  // Set-wide zones split by orientation; the current slide's preview/drag/export
+  // use its own orientation's zone and its swapped canvas size.
+  const zones: SetTextZones = fontsReady
+    ? measureSetTextZone(slides, theme, size)
+    : { portrait: 0, landscape: 0 };
+  const setBlockH = zoneForSlide(zones, slide);
+  const previewSize = slideSize(size, slide);
 
   // Effective text look for the current slide: its per-slide override, falling
   // back to the set-wide theme.text. The look controls read/write these.
@@ -615,7 +628,9 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
     const canvas = canvasRef.current;
     const container = containerRef.current;
     if (!canvas || !container || !fontsReady) return;
-    const aspect = size.width / size.height;
+    // The current slide's own canvas dims (swapped when it is landscape).
+    const drawSize = slideSize(size, slide);
+    const aspect = drawSize.width / drawSize.height;
     const cssH = Math.min(container.clientHeight, container.clientWidth / aspect);
     const cssW = cssH * aspect;
     const dpr = window.devicePixelRatio || 1;
@@ -625,16 +640,16 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
     canvas.height = Math.round(cssH * dpr);
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    const scale = canvas.width / size.width;
+    const scale = canvas.width / drawSize.width;
     const prev = currentIndex > 0 ? slides[currentIndex - 1] : undefined;
-    renderSlide(ctx, slide, theme, size, scale, {
+    renderSlide(ctx, slide, theme, drawSize, scale, {
       setBlockH,
       slideIndex: currentIndex,
       slideCount: slides.length,
       spillPrev: prev?.layout.overlapNext ? prev : undefined,
     });
-    if (showSafeArea) drawSafeAreaOverlay(ctx, size, scale);
-    drawAlignmentGuides(ctx, size, scale, guides);
+    if (showSafeArea) drawSafeAreaOverlay(ctx, drawSize, scale);
+    drawAlignmentGuides(ctx, drawSize, scale, guides);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [theme, slide, slides, sizeId, showSafeArea, fontsReady, setBlockH, imagesVersion, viewMode, guides]);
 
@@ -662,12 +677,15 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
     (e: { clientX: number; clientY: number }) => {
       const canvas = canvasRef.current!;
       const rect = canvas.getBoundingClientRect();
+      // Store coords are the current slide's oriented canvas, matching what draw
+      // renders — otherwise a landscape slide's hit-testing would be off-axis.
+      const s = slideSize(size, slide);
       return {
-        sx: ((e.clientX - rect.left) / rect.width) * size.width,
-        sy: ((e.clientY - rect.top) / rect.height) * size.height,
+        sx: ((e.clientX - rect.left) / rect.width) * s.width,
+        sy: ((e.clientY - rect.top) / rect.height) * s.height,
       };
     },
-    [size.width, size.height],
+    [size, slide],
   );
 
   // Drag the device or text box directly on the preview. Device is drawn on
@@ -678,7 +696,7 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
       if (e.button !== 0) return;
       const { sx, sy } = eventToStore(e);
       const prev = currentIndex > 0 ? slides[currentIndex - 1] : undefined;
-      const r = hitRegions(slide, theme, size, {
+      const r = hitRegions(slide, theme, previewSize, {
         setBlockH,
         spillPrev: prev?.layout.overlapNext ? prev : undefined,
       });
@@ -708,7 +726,7 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
       };
       canvasRef.current?.setPointerCapture(e.pointerId);
     },
-    [eventToStore, slide, theme, size, setBlockH, currentIndex, slides],
+    [eventToStore, slide, theme, previewSize, setBlockH, currentIndex, slides],
   );
 
   const onCanvasPointerMove = useCallback(
@@ -720,7 +738,7 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
         if (!canvas) return;
         const { sx, sy } = eventToStore(e);
         const prev = currentIndex > 0 ? slides[currentIndex - 1] : undefined;
-        const r = hitRegions(slide, theme, size, {
+        const r = hitRegions(slide, theme, previewSize, {
           setBlockH,
           spillPrev: prev?.layout.overlapNext ? prev : undefined,
         });
@@ -736,14 +754,15 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
       const dy = sy - d.startSY;
       // Threshold in store px scaled to CSS so it's a few real pixels either way.
       const rect = canvasRef.current!.getBoundingClientRect();
-      const cssMove = Math.hypot((dx / size.width) * rect.width, (dy / size.height) * rect.height);
+      const ps = slideSize(size, slide);
+      const cssMove = Math.hypot((dx / ps.width) * rect.width, (dy / ps.height) * rect.height);
       if (!d.moved && cssMove < 3) return;
       d.moved = true;
       didDragRef.current = true;
 
       // Snap the dragged object's centre to the canvas centre or the other
       // object's centre when within threshold; draw a guide at each snap.
-      const snap = size.width * 0.012;
+      const snap = ps.width * 0.012;
       let cx = d.cX0 + dx;
       let cy = d.cY0 + dy;
       const nextGuides: AlignGuide[] = [];
@@ -759,12 +778,12 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
         }
         return best;
       };
-      const sx0 = nearest(cx, [size.width / 2, d.otherCX]);
+      const sx0 = nearest(cx, [ps.width / 2, d.otherCX]);
       if (sx0 !== null) {
         cx = sx0;
         nextGuides.push({ axis: 'v', pos: sx0 });
       }
-      const sy0 = nearest(cy, [size.height / 2, d.otherCY]);
+      const sy0 = nearest(cy, [ps.height / 2, d.otherCY]);
       if (sy0 !== null) {
         cy = sy0;
         nextGuides.push({ axis: 'h', pos: sy0 });
@@ -778,7 +797,7 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
       patchSlide(slide.id, { layout: { ...d.base, ...patch } });
       setGuides(nextGuides);
     },
-    [eventToStore, patchSlide, slide.id, slide, theme, size, setBlockH, currentIndex, slides],
+    [eventToStore, patchSlide, slide.id, slide, theme, size, previewSize, setBlockH, currentIndex, slides],
   );
 
   const onCanvasPointerUp = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -802,13 +821,14 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
     setError(null);
     try {
       const prev = currentIndex > 0 ? slides[currentIndex - 1] : undefined;
-      const blob = await exportSlidePng(slide, theme, size, {
+      const blob = await exportSlidePng(slide, theme, previewSize, {
         setBlockH,
         slideIndex: currentIndex,
         slideCount: slides.length,
         spillPrev: prev?.layout.overlapNext ? prev : undefined,
       });
-      downloadBlob(blob, `storeshots-${size.id}.png`);
+      const suffix = slideOrientation(slide) === 'landscape' ? '-landscape' : '';
+      downloadBlob(blob, `storeshots-${size.id}${suffix}.png`);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -1619,6 +1639,27 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
                 </button>
               ))}
             </div>
+            {/* Per-screen orientation. Landscape swaps the canvas and lays the
+                phone on its side; both stores accept a mix within one set. */}
+            <div className="mt-2">
+              <span className="mb-1 block text-[11px] text-neutral-500">Orientation</span>
+              <div className="grid grid-cols-2 gap-1">
+                {(['portrait', 'landscape'] as Orientation[]).map((o) => (
+                  <button
+                    key={o}
+                    onClick={() => setSlideOrientation(o)}
+                    className={
+                      'rounded border px-2 py-1.5 text-xs capitalize ' +
+                      (slideOrientation(slide) === o
+                        ? 'border-indigo-500 bg-indigo-950 text-neutral-100'
+                        : 'border-neutral-700 text-neutral-400 hover:text-neutral-200')
+                    }
+                  >
+                    {o}
+                  </button>
+                ))}
+              </div>
+            </div>
             <Row label={`Scale ${slide.layout.deviceScale.toFixed(2)}`}>
               <input
                 type="range"
@@ -1931,7 +1972,7 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
                     slideCount={slides.length}
                     theme={theme}
                     size={size}
-                    setBlockH={setBlockH}
+                    zones={zones}
                     spillPrev={i > 0 && slides[i - 1].layout.overlapNext ? slides[i - 1] : undefined}
                     cssH={rowSlideH}
                     selected={selectedSet.has(s.id)}
@@ -1944,7 +1985,8 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
             )}
           </div>
           <p className="font-mono text-xs text-neutral-500">
-            {size.width} × {size.height}
+            {previewSize.width} × {previewSize.height}
+            {slideOrientation(slide) === 'landscape' ? ' · landscape' : ''}
             {viewMode === 'row' ? ` · ${slides.length} slides` : ''}
           </p>
         </main>
@@ -1962,7 +2004,7 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
             slideCount={slides.length}
             theme={theme}
             size={size}
-            setBlockH={setBlockH}
+            zones={zones}
             spillPrev={i > 0 && slides[i - 1].layout.overlapNext ? slides[i - 1] : undefined}
             selected={selectedSet.has(s.id)}
             fontsReady={fontsReady}

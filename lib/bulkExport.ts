@@ -1,7 +1,7 @@
 import JSZip from 'jszip';
 import type { Slide, Theme } from './types';
-import { getSize, STORE_RULES, validateSize } from './sizes';
-import { measureSetTextZone, renderSlide } from './render';
+import { getSize, slideSize, STORE_RULES, validateSize } from './sizes';
+import { measureSetTextZone, renderSlide, zoneForSlide } from './render';
 import { encodeRgbPng } from './png';
 import { assertRenderFonts, loadRenderFonts } from './fonts';
 
@@ -55,7 +55,7 @@ export async function exportAllZip(
         `${sizeId}: ${set.slides.length} slides exceeds the ${cap}-slide cap for this store`,
       );
     }
-    const setBlockH = measureSetTextZone(set.slides, set.theme, size);
+    const zones = measureSetTextZone(set.slides, set.theme, size);
     const folder = zip.folder(sizeId);
     if (!folder) throw new Error(`Could not create zip folder ${sizeId}`);
 
@@ -71,12 +71,14 @@ export async function exportAllZip(
       // to repaint for and throttle timers hard — so don't yield there.
       if (!document.hidden) await yieldToEventLoop();
 
-      const canvas = new OffscreenCanvas(size.width, size.height);
+      // A landscape slide exports at the size's W/H swapped; portrait is `size`.
+      const oriented = slideSize(size, slide);
+      const canvas = new OffscreenCanvas(oriented.width, oriented.height);
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('Could not get 2d context for export');
       const prev = si > 0 ? set.slides[si - 1] : undefined;
-      renderSlide(ctx, slide, set.theme, size, 1, {
-        setBlockH,
+      renderSlide(ctx, slide, set.theme, oriented, 1, {
+        setBlockH: zoneForSlide(zones, slide),
         slideIndex: si,
         slideCount: set.slides.length,
         spillPrev: prev?.layout.overlapNext ? prev : undefined,
@@ -84,17 +86,17 @@ export async function exportAllZip(
 
       // Per image, not once: silent dimension drift is the failure mode that
       // matters most.
-      if (canvas.width !== size.width || canvas.height !== size.height) {
+      if (canvas.width !== oriented.width || canvas.height !== oriented.height) {
         throw new Error(
           `Export canvas for ${sizeId} slide ${si + 1} is ${canvas.width}x${canvas.height}, ` +
-            `expected ${size.width}x${size.height}`,
+            `expected ${oriented.width}x${oriented.height}`,
         );
       }
 
       const name = String(si + 1).padStart(2, '0');
       if (format === 'png') {
-        const img = ctx.getImageData(0, 0, size.width, size.height);
-        folder.file(`${name}.png`, encodeRgbPng(img.data, size.width, size.height));
+        const img = ctx.getImageData(0, 0, oriented.width, oriented.height);
+        folder.file(`${name}.png`, encodeRgbPng(img.data, oriented.width, oriented.height));
       } else {
         folder.file(`${name}.jpg`, await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.92 }));
       }

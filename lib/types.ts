@@ -137,6 +137,8 @@ export type TextStyleOverride = Partial<
   Pick<Theme['text'], 'colour' | 'accentColour' | 'glow' | 'glowColour'>
 >;
 
+export type Orientation = 'portrait' | 'landscape';
+
 export type Slide = {
   id: string;
   headline: string;
@@ -146,6 +148,10 @@ export type Slide = {
   textStyle?: TextStyleOverride; // per-slide text colour/accent/glow, over theme.text
   layout: SlideLayout;
   layoutId: LayoutId; // the preset this slide's layout was last applied from
+  // Per-slide orientation. Undefined = 'portrait' (every pre-landscape project).
+  // 'landscape' swaps the canvas W/H of the set's size and turns the phone frame
+  // 90°; both stores accept a mix of orientations within one screenshot set.
+  orientation?: Orientation;
 };
 
 export type Project = {
