@@ -1,4 +1,4 @@
-import type { LayoutId, SlideLayout } from './types';
+import type { LayoutId, Orientation, SlideLayout } from './types';
 
 export type { LayoutId } from './types';
 
@@ -28,14 +28,20 @@ export const BASE_SLIDE_LAYOUT: SlideLayout = {
 export type LayoutPreset = {
   id: LayoutId;
   label: string;
-  textPosition: 'top' | 'bottom';
+  textPosition: 'top' | 'bottom' | 'left' | 'right';
   sizing: 'slot' | 'bleed';
   fill: number; // slot mode only
-  anchor: 'top' | 'center' | 'bottom'; // slot mode only
+  anchor: 'top' | 'center' | 'bottom'; // slot mode only; reads left/centre/right for side text
   bleed: number; // bleed mode only: fraction of device height past the edge
   widthPct: number; // bleed mode only: fraction of canvas width, capped
+  heightPct?: number; // side-text bleed only: fraction of canvas height
+  bandPct?: number; // side text only: fraction of canvas width for the text column
   shadow: boolean;
   rotate: number; // degrees
+  // Which orientations offer this preset. Omitted = both. A landscape canvas
+  // has almost no vertical slack, so the side-text presets are landscape-only;
+  // `angled` is portrait-only for the opposite reason (see LAYOUTS).
+  orientations?: Orientation[];
 };
 
 // Two sizing contracts. Crop layouts size by width and position by bleed —
@@ -93,8 +99,79 @@ export const LAYOUTS: LayoutPreset[] = [
     widthPct: 0.84,
     shadow: true,
     rotate: 8,
+    // PORTRAIT ONLY. In landscape the device already carries a 90° base turn,
+    // and the tilt on top grows the bounding box along the axis that has least
+    // room; the device shrinks hard for a tilt that reads as a mistake rather
+    // than a flourish on a wide body. Withheld rather than left to be found.
+    orientations: ['portrait'],
+  },
+  // --- Landscape only, text BESIDE the device ------------------------------
+  // A landscape canvas is short and wide. Text above the device competes for
+  // the scarce axis; text beside it spends the plentiful one, which is why
+  // these are the layouts to reach for on a tablet in landscape.
+  {
+    id: 'side-text-crop',
+    label: 'Side text, crop',
+    textPosition: 'left',
+    sizing: 'bleed',
+    fill: 1,
+    anchor: 'center',
+    bleed: 0.2,
+    widthPct: 0.84,
+    heightPct: 0.86,
+    bandPct: 0.4,
+    shadow: false,
+    rotate: 0,
+    orientations: ['landscape'],
+  },
+  {
+    id: 'side-text-crop-right',
+    label: 'Side text, crop (right)',
+    textPosition: 'right',
+    sizing: 'bleed',
+    fill: 1,
+    anchor: 'center',
+    bleed: 0.2,
+    widthPct: 0.84,
+    heightPct: 0.86,
+    bandPct: 0.4,
+    shadow: false,
+    rotate: 0,
+    orientations: ['landscape'],
+  },
+  {
+    id: 'side-text-float',
+    label: 'Side text, float',
+    textPosition: 'left',
+    sizing: 'slot',
+    fill: 0.92,
+    anchor: 'center',
+    bleed: 0,
+    widthPct: 0.84,
+    heightPct: 0.86,
+    bandPct: 0.4,
+    shadow: true,
+    rotate: 0,
+    orientations: ['landscape'],
   },
 ];
+
+// Presets offered for a given orientation. Angled disappears in landscape and
+// the side-text set disappears in portrait.
+export function layoutsFor(orientation: Orientation): LayoutPreset[] {
+  return LAYOUTS.filter((l) => !l.orientations || l.orientations.includes(orientation));
+}
+
+// The preset a slide should fall back to when its current one isn't offered in
+// the orientation it just moved to — switching a slide to landscape must not
+// leave it on `angled`, and back to portrait must not leave it on side text.
+export function defaultLayoutFor(orientation: Orientation): LayoutId {
+  return orientation === 'landscape' ? 'side-text-crop' : 'top-text-crop';
+}
+
+export function layoutAllowedIn(id: LayoutId, orientation: Orientation): boolean {
+  return layoutsFor(orientation).some((l) => l.id === id);
+}
 
 export function getLayout(id: LayoutId): LayoutPreset {
   const l = LAYOUTS.find((l) => l.id === id);
@@ -113,8 +190,15 @@ export function applyLayout(layout: SlideLayout, preset: LayoutPreset): SlideLay
     deviceAnchor: preset.anchor,
     deviceBleed: preset.bleed,
     deviceWidthPct: preset.widthPct,
+    deviceHeightPct: preset.heightPct ?? layout.deviceHeightPct,
+    textBandPct: preset.bandPct ?? layout.textBandPct,
     deviceShadow: preset.shadow,
     deviceRotation: preset.rotate,
+    // Switching between a side-text and a top-text preset moves the text onto
+    // the other axis; a drag nudge measured against the old one is meaningless
+    // and reads as the block landing crooked, so it's dropped.
+    textOffsetX: 0,
+    textOffsetY: 0,
   };
 }
 

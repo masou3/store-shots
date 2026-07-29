@@ -27,6 +27,28 @@ import type { SetClampState } from './render';
 // of its requested size, so it sits well above the line and no longer needs an
 // orientation-specific exemption to stay quiet. Warning on `clamped` would have
 // fired on it; warning on size does not.
+//
+// RE-CHECKED ACROSS CANVASES, AND IT IS NOT GLOBAL. 70% was first derived by
+// eye on one canvas/frame pair, so it was re-rendered at 100/85/70/55/40% on
+// three combinations and judged again. Where each stops looking deliberate:
+//
+//   Play phone portrait, top text        breaks below ~70%
+//   iPad landscape, SIDE text            breaks below ~70%
+//   iPad landscape, TOP text             breaks below ~85%
+//
+// The same 30% shrink genuinely does not read the same everywhere: how much
+// dead background it exposes depends on the canvas, and a bleed-positioned
+// device also pulls away from the edge it was cropped against as it shrinks,
+// so it stops reading as "cropped" and starts reading as "adrift". That effect
+// is worst on a wide canvas with a wide device, which is exactly landscape
+// top text.
+//
+// 0.7 is kept as a single global anyway, because the one combination that
+// wants a stricter number is landscape top text — the layout the side-text
+// presets exist to replace, and which nobody should be using in landscape. For
+// every combination in normal use, 70% is the measured breaking point. If
+// landscape top text ever becomes a recommended layout, this has to become a
+// per-canvas number and the figures above are the starting point.
 const MIN_DEVICE_FRACTION = 0.7;
 
 // Long headlines get elided so the sentence stays readable in the sidebar.

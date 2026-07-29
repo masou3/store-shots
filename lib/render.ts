@@ -24,7 +24,9 @@ import { getBitmap } from './images';
 import {
   ASCENT_EM,
   BUTTON_THICKNESS_PCT,
+  DEVICE_MAX_HEIGHT_PCT,
   DEVICE_MAX_WIDTH_PCT,
+  SIDE_TEXT_BAND_PCT,
   DEVICE_SHADOW_BLUR_PCT,
   DEVICE_SHADOW_COLOUR,
   DEVICE_SHADOW_OFFSET_PCT,
@@ -81,6 +83,34 @@ type DeviceGeometry = {
   shrinkRatio: number;
 };
 
+export function isSideText(layout: SlideLayout): boolean {
+  return layout.textPosition === 'left' || layout.textPosition === 'right';
+}
+
+// THE load-bearing function of the side-text contract.
+//
+// The text column's width is a fixed fraction of the canvas, narrowed by the
+// set-wide maxWidthPct dial. It is NEVER the measured width of the longest
+// line. Both inputs are headline-independent, so the column — and therefore the
+// device slot beside it, and therefore the device — is identical on every slide
+// no matter what the headlines say.
+//
+// Shrinking the column to the longest actual line would look tidier and would
+// reintroduce the exact bug the set-wide text zone exists to prevent, only on
+// the horizontal axis: the device would then move whenever a headline changed
+// length. That is why this takes no text metrics at all — it cannot drift into
+// depending on them.
+export function sideTextBandWidth(layout: SlideLayout, theme: Theme, canvasW: number): number {
+  return canvasW * (layout.textBandPct ?? SIDE_TEXT_BAND_PCT) * (theme.text.maxWidthPct / 100);
+}
+
+// The width a slide's text wraps against. Side text wraps to its fixed column;
+// top/bottom text wraps to the canvas, capped by the safe area.
+function textMaxWidth(slide: Slide, theme: Theme, w: number, typeW: number): number {
+  if (isSideText(slide.layout)) return sideTextBandWidth(slide.layout, theme, w);
+  return Math.min(w * (theme.text.maxWidthPct / 100), w - 2 * typeW * SAFE_AREA_PCT);
+}
+
 let scratch: Ctx2D | null = null;
 function scratchCtx(): Ctx2D {
   if (!scratch) {
@@ -106,6 +136,11 @@ export function measureSetTextZone(slides: Slide[], theme: Theme, size: StoreSiz
   // landscape headline is the same optical size as a portrait one.
   const typeW = Math.min(size.width, size.height);
   for (const s of slides) {
+    // Side-text slides are excluded on purpose. Their zone is a fixed vertical
+    // band whose width owes nothing to text height, so folding their block
+    // height into this max would push the DEVICE down on their top-text
+    // siblings for no reason — a coupling with no geometric justification.
+    if (isSideText(s.layout)) continue;
     const o = slideOrientation(s);
     // Landscape wraps against the swapped (wider) canvas width.
     const w = o === 'landscape' ? size.height : size.width;
@@ -201,6 +236,7 @@ type SlideGeom = {
   layout: SlideLayout;
   text: TextLayout;
   blockTop: number;
+  blockLeft: number;
   geo: DeviceGeometry;
   bmp: ImageBitmap | null;
 };
@@ -221,21 +257,50 @@ function computeSlideGeom(
   // size here is already oriented; the short side is the type reference so text
   // stays optically consistent with the set's portrait slides.
   const text = layoutText(ctx, slide, theme, w, Math.min(w, h));
-  const insetY = h * (layout.textInsetPct / 100);
-  const gap = h * TEXT_DEVICE_GAP_PCT;
-  const zoneH = insetY + (setBlockH ?? text.blockH) + gap;
-  const slotTop = layout.textPosition === 'top' ? zoneH : 0;
-  const slotBottom = layout.textPosition === 'top' ? h : h - zoneH;
-  const blockTopBase = layout.textPosition === 'top' ? insetY : h - insetY - text.blockH;
-  const blockTop = blockTopBase + (layout.textOffsetY ?? 0);
+  const side = isSideText(layout);
   const bmp = slide.imageKey ? getBitmap(slide.imageKey) : null;
   const landscape = slideOrientation(slide) === 'landscape';
+
+  // Side text: a VERTICAL band. The zone eats horizontal space and the device
+  // keeps the full canvas height. Note the zone width uses the fixed band, not
+  // setBlockH — nothing about it depends on how long the headlines are, which
+  // is the whole point (see sideTextBandWidth). The text block centres
+  // vertically in the canvas, so IT moves with headline length while the
+  // device does not.
+  const insetX = w * (layout.textInsetPct / 100);
+  const insetY = h * (layout.textInsetPct / 100);
+  const zoneW = side ? insetX + text.maxW + w * TEXT_DEVICE_GAP_PCT : 0;
+  const slotLeft = side && layout.textPosition === 'left' ? zoneW : 0;
+  const slotRight = side && layout.textPosition === 'right' ? w - zoneW : w;
+
+  const gap = h * TEXT_DEVICE_GAP_PCT;
+  const zoneH = side ? 0 : insetY + (setBlockH ?? text.blockH) + gap;
+  const slotTop = !side && layout.textPosition === 'top' ? zoneH : 0;
+  const slotBottom = !side && layout.textPosition === 'top' ? h : h - zoneH;
+
+  const blockTopBase = side
+    ? (h - text.blockH) / 2
+    : layout.textPosition === 'top'
+      ? insetY
+      : h - insetY - text.blockH;
+  const blockTop = blockTopBase + (layout.textOffsetY ?? 0);
+  // Top/bottom text is centred across the canvas; side text is pinned into its
+  // own column, so the box left edge is the band's, not a centred offset.
+  const blockLeftBase = side
+    ? layout.textPosition === 'left'
+      ? insetX
+      : w - insetX - text.maxW
+    : (w - text.maxW) / 2;
+  const blockLeft = blockLeftBase + (layout.textOffsetX ?? 0);
+
   const geo = deviceGeometry(
     theme,
     layout,
     size,
     slotTop,
     slotBottom,
+    slotLeft,
+    slotRight,
     bmp ? bmp.width / bmp.height : null,
     landscape,
   );
@@ -247,7 +312,7 @@ function computeSlideGeom(
   }
   // Free-drag horizontal nudge, on top of the centred (or overlap) position.
   geo.cx += layout.deviceOffsetX ?? 0;
-  return { layout, text, blockTop, geo, bmp };
+  return { layout, text, blockTop, blockLeft, geo, bmp };
 }
 
 // The one render function. Preview, row, thumbnails and export all call this
@@ -289,7 +354,7 @@ export function renderSlide(
     drawDevice(ctx, prev.bmp, theme, prev.layout, { ...prev.geo, cx: prev.geo.cx - w }, scale);
   }
 
-  drawTextBlock(ctx, cur.text, effTheme, w, cur.blockTop, cur.layout.textOffsetX ?? 0, scale);
+  drawTextBlock(ctx, cur.text, effTheme, cur.blockLeft, cur.blockTop, scale);
   drawDevice(ctx, cur.bmp, theme, cur.layout, cur.geo, scale);
   drawGrain(ctx, w, h, theme.grain);
   // A glowing border framing the whole slide — over everything, drawn last.
@@ -315,15 +380,10 @@ export function hitRegions(
   opts: RenderOpts = {},
 ): HitRegions {
   const ctx = scratchCtx();
-  const { text, blockTop, geo } = computeSlideGeom(ctx, slide, theme, size, opts.setBlockH);
+  const { text, blockTop, blockLeft, geo } = computeSlideGeom(ctx, slide, theme, size, opts.setBlockH);
   return {
     device: { cx: geo.cx, cy: geo.cy, w: geo.bboxW, h: geo.bboxH },
-    text: {
-      x: (size.width - text.maxW) / 2 + (slide.layout.textOffsetX ?? 0),
-      y: blockTop,
-      w: text.maxW,
-      h: text.blockH,
-    },
+    text: { x: blockLeft, y: blockTop, w: text.maxW, h: text.blockH },
   };
 }
 
@@ -568,11 +628,13 @@ function layoutText(
   const t = theme.text;
   const family = resolveFontFamily(t.family);
   const headSize = typeW * (t.sizePct / 100);
-  // The safe-area inset is a fraction of the SHORT side (typeW), matching
-  // drawSafeAreaOverlay. Taking it off `w` instead made the two agree only
-  // when w was the short side — i.e. in portrait — so on a landscape canvas
-  // the dashed overlay stopped describing where text could actually go.
-  const maxW = Math.min(w * (t.maxWidthPct / 100), w - 2 * typeW * SAFE_AREA_PCT);
+  // Wrap width comes from textMaxWidth: the fixed side-text column, or the
+  // canvas capped by the safe area for top/bottom text. That safe-area inset is
+  // a fraction of the SHORT side (typeW), matching drawSafeAreaOverlay. Taking
+  // it off `w` instead made the two agree only when w was the short side — i.e.
+  // in portrait — so on a landscape canvas the dashed overlay stopped
+  // describing where text could actually go.
+  const maxW = textMaxWidth(slide, theme, w, typeW);
 
   const headlineFont = `${t.weight} ${headSize}px ${family}`;
   const subSize = headSize * SUBHEAD_SIZE_RATIO;
@@ -629,6 +691,8 @@ function deviceGeometry(
   size: StoreSize,
   slotTop: number,
   slotBottom: number,
+  slotLeft: number,
+  slotRight: number,
   sourceAspect: number | null,
   landscape: boolean,
 ): DeviceGeometry {
@@ -665,9 +729,80 @@ function deviceGeometry(
 
   let outerH: number;
   let cy: number;
+  let cx = w / 2;
   let clamped = false;
   let slackPx = Infinity;
   let shrinkRatio = 1;
+
+  const maxHeight = h * DEVICE_MAX_HEIGHT_PCT;
+
+  if (isSideText(layout)) {
+    // SIDE TEXT — the portrait contract reflected onto the other axis.
+    //
+    // 'bleed' (side crop): HEIGHT-driven. deviceHeightPct of the canvas
+    // (capped); width derives from the body aspect and has nothing to do with
+    // the slot; deviceBleed of the bbox WIDTH hangs past the edge opposite the
+    // text. The device lands in the same place regardless of headline length.
+    // Sole fit constraint: shrink only if it would collide with the text band.
+    //
+    // 'slot' (side float): WIDTH-driven off the slot beside the text, with the
+    // height cap as the fit-in-box clamp that must never drive the layout.
+    const textLeft = layout.textPosition === 'left';
+    if (layout.deviceSizing === 'bleed') {
+      const reqH = Math.min(
+        (layout.deviceHeightPct ?? 0.86) * layout.deviceScale,
+        DEVICE_MAX_HEIGHT_PCT,
+      ) * h;
+      outerH = reqH / bboxHFactor;
+      const bleed = layout.deviceBleed;
+      const available = Math.max(0, textLeft ? w - slotLeft : slotRight);
+      const requiredVisible = (1 - bleed) * outerH * bboxWFactor;
+      slackPx = available - requiredVisible;
+      clamped = requiredVisible > available;
+      if (clamped) {
+        const requested = outerH;
+        outerH = available / (1 - bleed) / bboxWFactor;
+        shrinkRatio = requested > 0 ? outerH / requested : 1;
+      }
+      const bboxW = outerH * bboxWFactor;
+      cx = textLeft ? w + bleed * bboxW - bboxW / 2 : -bleed * bboxW + bboxW / 2;
+    } else {
+      const slotW = Math.max(0, slotRight - slotLeft);
+      outerH = (slotW * layout.deviceFill * layout.deviceScale) / bboxWFactor;
+      if (outerH * bboxHFactor > maxHeight) {
+        outerH = maxHeight / bboxHFactor;
+      }
+      const bboxW = outerH * bboxWFactor;
+      // deviceAnchor reads as left/centre/right on this axis: 'top' pins to the
+      // slot's near edge, 'bottom' to its far edge, matching how the same dial
+      // pins to the top or bottom edge in the portrait contract.
+      cx =
+        layout.deviceAnchor === 'top'
+          ? slotLeft + bboxW / 2
+          : layout.deviceAnchor === 'bottom'
+            ? slotRight - bboxW / 2
+            : (slotLeft + slotRight) / 2;
+    }
+    // Full canvas height is available either way, so the device centres on it.
+    cy = h / 2;
+    const screenW = outerH / kH;
+    return {
+      spec,
+      cx,
+      cy: cy + layout.deviceOffsetY,
+      outerW: outerH * bodyAspect,
+      outerH,
+      screenW,
+      screenH: screenW / screenAspect,
+      bboxW: outerH * bboxWFactor,
+      bboxH: outerH * bboxHFactor,
+      rotationDeg,
+      imageCounterDeg: framedLandscape ? -90 : 0,
+      clamped,
+      slackPx,
+      shrinkRatio,
+    };
+  }
 
   if (layout.deviceSizing === 'bleed') {
     const reqW = Math.min(layout.deviceWidthPct * layout.deviceScale, DEVICE_MAX_WIDTH_PCT) * w;
@@ -711,7 +846,7 @@ function deviceGeometry(
   const screenW = outerH / kH;
   return {
     spec,
-    cx: w / 2,
+    cx,
     cy: cy + layout.deviceOffsetY,
     outerW: outerH * bodyAspect,
     outerH,
@@ -731,9 +866,8 @@ function drawTextBlock(
   ctx: Ctx2D,
   text: TextLayout,
   theme: Theme,
-  w: number,
+  boxLeft: number,
   blockTop: number,
-  offsetX = 0,
   scale = 1,
 ): void {
   const t = theme.text;
@@ -743,7 +877,6 @@ function drawTextBlock(
   ctx.textBaseline = 'alphabetic';
   const baseColour = t.colour;
   const accentColour = t.accentColour ?? t.colour;
-  const boxLeft = (w - text.maxW) / 2 + offsetX;
 
   type Op = { line: RichLine; y: number; font: string; alpha: number };
   const ops: Op[] = [];

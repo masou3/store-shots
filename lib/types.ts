@@ -32,15 +32,35 @@ export type FontFamilyId =
   | 'serif'
   | 'mono';
 
-export type LayoutId = 'top-text-crop' | 'top-text-float' | 'bottom-text-crop' | 'angled';
+export type LayoutId =
+  | 'top-text-crop'
+  | 'top-text-float'
+  | 'bottom-text-crop'
+  | 'angled'
+  // Landscape-only. A landscape canvas has horizontal slack and almost no
+  // vertical slack, so text goes BESIDE the device rather than above it.
+  | 'side-text-crop'
+  | 'side-text-crop-right'
+  | 'side-text-float';
 
 // Per-slide layout: text position and every device dial. Lives on the Slide,
 // not the Theme, so each screen can carry its own layout while gradient, type,
 // grain and frame stay set-wide. The set-wide text zone (measureSetTextZone)
 // is unaffected — it measures text metrics only, never these fields.
 export type SlideLayout = {
-  textPosition: 'top' | 'bottom';
+  // 'top'/'bottom' put the text in a horizontal band and leave the device the
+  // rect below/above it — the portrait contract. 'left'/'right' put it in a
+  // VERTICAL band and leave the device the rect beside it, which is the mirror
+  // of that contract on the other axis and the only one that works on a
+  // landscape canvas, where vertical slack is what runs out first.
+  textPosition: 'top' | 'bottom' | 'left' | 'right';
   textInsetPct: number;
+  // Side-text only: fraction of canvas width reserved for the text column,
+  // before maxWidthPct narrows it. Undefined = SIDE_TEXT_BAND_PCT.
+  textBandPct?: number;
+  // Side-text bleed only: device height as a fraction of canvas height, the
+  // mirror of deviceWidthPct. Undefined = the preset default.
+  deviceHeightPct?: number;
   // 'slot': height-driven — deviceFill of the rect left after the text zone
   //         (float and angled layouts).
   // 'bleed': width-driven — deviceWidthPct of the canvas, positioned by

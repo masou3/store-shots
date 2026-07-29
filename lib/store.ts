@@ -1,6 +1,13 @@
 import { create } from 'zustand';
 import type { Orientation, Slide, SlideBackground, SlideLayout, TextStyleOverride, Theme } from './types';
-import { applyLayout, getLayout, slideLayoutFor, type LayoutId } from './layouts';
+import {
+  applyLayout,
+  defaultLayoutFor,
+  getLayout,
+  layoutAllowedIn,
+  slideLayoutFor,
+  type LayoutId,
+} from './layouts';
 import { clearAllImages, ensureBitmap, getImageBlob, removeImage, saveImage } from './imageStore';
 import { STORE_KINDS, capFor, otherStore, type StoreKind } from './storeKinds';
 import {
@@ -354,11 +361,21 @@ export const useStore = create<StoreState>((set, get) => {
           ),
         };
       }),
+    // Turning a slide also re-homes its layout when the current one isn't
+    // offered in the new orientation — `angled` going landscape, or side text
+    // coming back to portrait. Without this a slide keeps a layout the preset
+    // list no longer shows, which looks like a bug in the picker rather than a
+    // consequence of the turn. Layouts valid in both orientations are kept.
     setSlideOrientation: (o) =>
       updateActive((s) => {
         const ids = new Set(targetIds(s));
         return {
-          slides: s.slides.map((sl) => (ids.has(sl.id) ? { ...sl, orientation: o } : sl)),
+          slides: s.slides.map((sl) => {
+            if (!ids.has(sl.id)) return sl;
+            if (layoutAllowedIn(sl.layoutId, o)) return { ...sl, orientation: o };
+            const id = defaultLayoutFor(o);
+            return { ...sl, orientation: o, layoutId: id, layout: applyLayout(sl.layout, getLayout(id)) };
+          }),
         };
       }),
     // Seed only: existing slides keep whatever they already carry, so flipping

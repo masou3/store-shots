@@ -13,10 +13,24 @@
 // height-driven and must never hit this cap.
 export const DEVICE_MAX_WIDTH_PCT = 0.84;
 
+// The mirror of the above for SIDE-TEXT layouts, where the scarce axis flips.
+// A landscape canvas has horizontal slack and very little vertical, so text
+// beside the device leaves the device the full canvas height; this is then the
+// fit-in-box clamp on that axis, exactly as the width cap is in portrait.
+export const DEVICE_MAX_HEIGHT_PCT = 0.9;
+
+// Fraction of canvas WIDTH reserved for the text column in side-text layouts,
+// before the theme's maxWidthPct narrows it. Fixed, never derived from the
+// measured text: see sideTextBandWidth in render.ts for why the whole contract
+// depends on that.
+export const SIDE_TEXT_BAND_PCT = 0.4;
+
 // Text must stay at least this far in from every edge.
 export const SAFE_AREA_PCT = 0.08;
 
-// Gap kept between the text rect and the device body, fraction of canvas height.
+// Gap kept between the text rect and the device body. A fraction of canvas
+// height for top/bottom text, of canvas WIDTH for side text — it is a gap along
+// whichever axis the text and device are separated on.
 export const TEXT_DEVICE_GAP_PCT = 0.02;
 
 // First-baseline offset from the top of the text block, in ems.

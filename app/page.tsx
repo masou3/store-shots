@@ -13,7 +13,7 @@ import {
 } from '@/lib/storeKinds';
 import { exportAllZip, type ExportProgress, type ExportSet } from '@/lib/bulkExport';
 import { DEVICE_SPECS } from '@/lib/deviceSpecs';
-import { LAYOUTS } from '@/lib/layouts';
+import { layoutsFor } from '@/lib/layouts';
 import { GRADIENT_PACKS } from '@/lib/presets';
 import { FONT_FAMILIES, loadRenderFonts } from '@/lib/fonts';
 import { copyWarning } from '@/lib/copyWarning';
@@ -1644,8 +1644,11 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
                   </button>
                 ))}
             </div>
+            {/* Scoped to the slide's orientation: side text is landscape-only
+                and angled is portrait-only, so an inapplicable preset is never
+                offered rather than offered and then quietly disappointing. */}
             <div className="flex flex-col gap-1">
-              {LAYOUTS.map((l) => (
+              {layoutsFor(slideOrientation(slide)).map((l) => (
                 <button
                   key={l.id}
                   onClick={() => setLayoutId(l.id)}
