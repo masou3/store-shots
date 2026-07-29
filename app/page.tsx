@@ -9,6 +9,8 @@ import {
   STORE_ORDER,
   capFor,
   otherStore,
+  isCrossClass,
+  cloneEffect,
   type StoreKind,
 } from '@/lib/storeKinds';
 import { exportAllZip, type ExportProgress, type ExportSet } from '@/lib/bulkExport';
@@ -443,10 +445,12 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
   const [pendingImport, setPendingImport] = useState<ProjectFile | null>(null);
   const [pendingReset, setPendingReset] = useState(false);
   const [pendingClone, setPendingClone] = useState<{
+    to: StoreKind;
     willTruncate: boolean;
     willOverwrite: boolean;
     cap: number;
     dropped: number[];
+    effect: { carries: string; drops: string } | null;
   } | null>(null);
   const [viewMode, setViewMode] = useState<'single' | 'row'>('single');
   const [notice, setNotice] = useState<string | null>(null);
@@ -496,7 +500,7 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
     replaceProject,
     resetProject,
     switchStore,
-    cloneToOther,
+    cloneTo,
   } = store;
 
   // The screens a layout/device edit currently targets. Empty selection means
@@ -858,10 +862,18 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
   }
 
   async function onExportAll() {
+    // Every populated set, in STORE_ORDER — up to four now, not two. Iterating
+    // the ordered keys rather than Object.values keeps the zip's folder order
+    // stable regardless of the order sets happened to be created in.
     const all = useStore.getState().sets;
-    const exportSets: ExportSet[] = Object.values(all)
-      .filter((s): s is NonNullable<typeof s> => !!s && s.exportSizeIds.length > 0)
-      .map((s) => ({ theme: s.theme, slides: s.slides, sizeIds: s.exportSizeIds }));
+    const exportSets: ExportSet[] = STORE_ORDER.filter(
+      (k) => all[k] && all[k]!.exportSizeIds.length > 0,
+    ).map((k) => ({
+      label: STORE_KINDS[k].label,
+      theme: all[k]!.theme,
+      slides: all[k]!.slides,
+      sizeIds: all[k]!.exportSizeIds,
+    }));
     const presetTotal = exportSets.reduce((a, s) => a + s.sizeIds.length, 0);
     if (presetTotal === 0) {
       setError('No output presets ticked in any set.');
@@ -873,7 +885,11 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
     try {
       const blob = await exportAllZip(exportSets, exportFormat, setBulkProgress);
       downloadBlob(blob, 'storeshots.zip');
-      setNotice(`Exported ${presetTotal} preset${presetTotal === 1 ? '' : 's'} across both sets.`);
+      const n = exportSets.length;
+      setNotice(
+        `Exported ${presetTotal} preset${presetTotal === 1 ? '' : 's'} across ` +
+          `${n} set${n === 1 ? '' : 's'}.`,
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -952,24 +968,28 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
   // Warn before the clone, never after — the tail is cut and can't be
   // recovered without reordering first. Clone runs immediately only when
   // nothing is lost or overwritten.
-  function requestClone() {
-    const targetCap = capFor(other).max;
+  // A cross-class clone always confirms, even when nothing is truncated or
+  // overwritten: dropping the layout and the screenshots is a loss in its own
+  // right, and the whole point is that it should not be a surprise.
+  function requestClone(to: StoreKind) {
+    const targetCap = capFor(to).max;
     const willTruncate = slides.length > targetCap;
-    const willOverwrite = otherExists;
-    if (!willTruncate && !willOverwrite) {
-      void runClone();
+    const willOverwrite = !!store.sets[to];
+    const effect = cloneEffect(activeStore, to);
+    if (!willTruncate && !willOverwrite && !effect) {
+      void runClone(to);
       return;
     }
     const dropped: number[] = [];
     for (let i = targetCap; i < slides.length; i++) dropped.push(i + 1);
-    setPendingClone({ willTruncate, willOverwrite, cap: targetCap, dropped });
+    setPendingClone({ to, willTruncate, willOverwrite, cap: targetCap, dropped, effect });
   }
 
-  async function runClone() {
+  async function runClone(to: StoreKind) {
     setPendingClone(null);
     setError(null);
     try {
-      await cloneToOther();
+      await cloneTo(to);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -1011,16 +1031,27 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
             );
           })}
         </div>
-        <button
-          onClick={requestClone}
-          className={
-            otherExists
-              ? 'rounded border border-neutral-700 px-2.5 py-1 text-xs text-neutral-500 hover:border-neutral-500'
-              : 'rounded border border-neutral-600 px-2.5 py-1 text-xs text-neutral-300 hover:border-neutral-400'
-          }
-        >
-          {otherExists ? 'Re-clone' : 'Set up for'} {STORE_KINDS[other].label}
-        </button>
+        {/* Four kinds means the clone target is a choice, not a given. */}
+        <label className="flex items-center gap-1.5 text-[11px] text-neutral-500">
+          Copy this set to
+          <select
+            value=""
+            onChange={(e) => {
+              if (e.target.value) requestClone(e.target.value as StoreKind);
+              e.target.value = '';
+            }}
+            className="rounded border border-neutral-700 bg-neutral-900 px-1.5 py-1 text-xs text-neutral-300"
+          >
+            <option value="">choose…</option>
+            {STORE_ORDER.filter((k) => k !== activeStore).map((k) => (
+              <option key={k} value={k}>
+                {STORE_KINDS[k].label}
+                {store.sets[k] ? ' (replace)' : ''}
+                {isCrossClass(activeStore, k) ? ' — look only' : ''}
+              </option>
+            ))}
+          </select>
+        </label>
 
         <div className="ml-auto flex items-center gap-4">
           <label className="flex items-center gap-2 text-xs text-neutral-400">
@@ -1062,28 +1093,38 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
         </div>
       )}
       {pendingClone && (
-        <div className="flex items-center gap-3 border-b border-amber-800 bg-amber-950/60 px-4 py-2 text-xs text-amber-300">
-          <span>
+        <div className="flex items-start gap-3 border-b border-amber-800 bg-amber-950/60 px-4 py-2 text-xs text-amber-300">
+          <span className="leading-relaxed">
+            Copying into {STORE_KINDS[pendingClone.to].label}.{' '}
+            {/* What is LOST leads, because that is the part that surprises
+                people: someone cloning a finished phone set into tablet is
+                about to lose a composition they spent time on. */}
+            {pendingClone.effect && (
+              <>
+                <strong className="font-semibold">{pendingClone.effect.drops}</strong>{' '}
+                {pendingClone.effect.carries}{' '}
+              </>
+            )}
             {pendingClone.willTruncate && (
               <>
-                {STORE_KINDS[other].label} takes {pendingClone.cap} screenshots.{' '}
+                {STORE_KINDS[pendingClone.to].label} takes {pendingClone.cap} screenshots.{' '}
                 {droppedText(pendingClone.dropped)}{' '}
               </>
             )}
             {pendingClone.willOverwrite && (
-              <>This overwrites the entire {STORE_KINDS[other].label} set. </>
+              <>This replaces the entire {STORE_KINDS[pendingClone.to].label} set. </>
             )}
             Continue?
           </span>
           <button
-            onClick={runClone}
-            className="rounded bg-amber-600 px-2 py-1 font-semibold text-black"
+            onClick={() => runClone(pendingClone.to)}
+            className="shrink-0 rounded bg-amber-600 px-2 py-1 font-semibold text-black"
           >
-            {pendingClone.willOverwrite ? 'Overwrite' : 'Clone'}
+            {pendingClone.willOverwrite ? 'Replace' : 'Copy'}
           </button>
           <button
             onClick={() => setPendingClone(null)}
-            className="rounded border border-neutral-600 px-2 py-1 text-neutral-300"
+            className="shrink-0 rounded border border-neutral-600 px-2 py-1 text-neutral-300"
           >
             Cancel
           </button>

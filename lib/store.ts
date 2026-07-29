@@ -146,7 +146,7 @@ type StoreState = {
 
   chooseStore: (kind: StoreKind) => void;
   switchStore: (kind: StoreKind) => void;
-  cloneToOther: () => Promise<void>;
+  cloneTo: (to: StoreKind) => Promise<void>; // copy the active set into another kind
 
   setSizeId: (id: string) => void;
   setLayoutId: (id: LayoutId) => void; // applies the preset to the selected slides
@@ -221,14 +221,22 @@ export const useStore = create<StoreState>((set, get) => {
     switchStore: (kind) =>
       set((state) => (state.sets[kind] ? { activeStore: kind, selectedIds: [] } : {})),
 
-    cloneToOther: async () => {
+    cloneTo: async (to) => {
       const state = get();
       const from = state.activeStore;
-      if (!from) return;
-      const to = otherStore(from);
+      if (!from || from === to) return;
       const src = state.sets[from];
       if (!src) return;
       const cfg = STORE_KINDS[to];
+      // A cross-CLASS clone (phone <-> tablet) cannot carry the composition.
+      // The clone logic was built for two portrait canvases of similar
+      // proportion; 1320x2868 to 2064x2752 is a different shape of problem, and
+      // a layout tuned against one lands wrong on the other. Screenshots go too:
+      // a 20:9 phone capture cover-cropped into a 4:3 tablet screen is not a
+      // tablet screenshot, it is a mangled phone one. So the cross-class clone
+      // carries the LOOK — gradient, colours, type, grain, texture — plus the
+      // words, and rebuilds everything positional from the target's defaults.
+      const crossClass = STORE_KINDS[from].deviceClass !== cfg.deviceClass;
 
       // Truncate to the target's cap, cutting from the END — slide 1 matters
       // most in both stores, so the tail is what goes. App Store (10) → Play
@@ -237,31 +245,52 @@ export const useStore = create<StoreState>((set, get) => {
       const kept = src.slides.slice(0, capFor(to).max);
 
       // Duplicate images under NEW keys — two independent sets, no shared blob.
-      // Both the screenshot and the background photo count.
+      // Both the screenshot and the background photo count. Skipped entirely
+      // for a cross-class clone, which carries no imagery at all.
       const keyMap = new Map<string, string>();
-      for (const sl of kept) {
-        for (const src of [sl.imageKey, sl.bg?.imageKey]) {
-          if (src && !keyMap.has(src)) {
-            const blob = await getImageBlob(src);
-            if (blob) keyMap.set(src, await saveImage(blob));
+      if (!crossClass) {
+        for (const sl of kept) {
+          for (const key of [sl.imageKey, sl.bg?.imageKey]) {
+            if (key && !keyMap.has(key)) {
+              const blob = await getImageBlob(key);
+              if (blob) keyMap.set(key, await saveImage(blob));
+            }
           }
         }
       }
-      const slides: Slide[] = kept.map((sl) => ({
-        id: crypto.randomUUID(),
-        headline: sl.headline,
-        subhead: sl.subhead,
-        imageKey: sl.imageKey ? keyMap.get(sl.imageKey) : undefined,
-        bg:
-          sl.bg && keyMap.has(sl.bg.imageKey)
-            ? { ...sl.bg, imageKey: keyMap.get(sl.bg.imageKey)! }
-            : undefined,
-        textStyle: sl.textStyle,
-        layout: sl.layout,
-        layoutId: sl.layoutId,
-      }));
-      // Duplicate the set-wide panorama too, under its own new key.
-      let panorama = src.theme.panorama;
+      const slides: Slide[] = kept.map((sl) => {
+        // Orientation is not composition — it says which way the screen is
+        // held, and both classes support both — so it survives the class
+        // change and picks the layout appropriate to it.
+        const orientation = sl.orientation;
+        const layoutId = crossClass
+          ? defaultLayoutFor(orientation ?? 'portrait')
+          : sl.layoutId;
+        return {
+          id: crypto.randomUUID(),
+          headline: sl.headline,
+          subhead: sl.subhead,
+          imageKey: sl.imageKey ? keyMap.get(sl.imageKey) : undefined,
+          bg:
+            sl.bg && keyMap.has(sl.bg.imageKey)
+              ? { ...sl.bg, imageKey: keyMap.get(sl.bg.imageKey)! }
+              : undefined,
+          // Per-slide text colour/accent/glow is part of the look, not the
+          // composition, so it crosses classes with the theme.
+          textStyle: sl.textStyle,
+          // Cross-class rebuilds the layout from the preset, which also drops
+          // the drag nudges (textOffsetX/Y, deviceOffsetX/Y) baked into the
+          // source — those are pixel offsets measured against a canvas that no
+          // longer exists, and carrying them lands things visibly crooked.
+          layout: crossClass ? slideLayoutFor(layoutId) : sl.layout,
+          layoutId,
+          orientation,
+        };
+      });
+      // Duplicate the set-wide panorama too, under its own new key. Cross-class
+      // drops it with the rest of the imagery — a panorama is fitted to a
+      // specific canvas width across a specific slide count.
+      let panorama = crossClass ? undefined : src.theme.panorama;
       if (panorama) {
         const blob = await getImageBlob(panorama.imageKey);
         panorama = blob ? { ...panorama, imageKey: await saveImage(blob) } : undefined;
@@ -281,6 +310,7 @@ export const useStore = create<StoreState>((set, get) => {
         currentSlideId: slides[0].id,
         sizeId: cfg.defaultSizeId,
         exportSizeIds: [cfg.defaultSizeId],
+        defaultOrientation: src.defaultOrientation,
       };
       // Re-clone overwrites: drop the old target's orphaned blobs (screenshots,
       // background photos and its panorama).

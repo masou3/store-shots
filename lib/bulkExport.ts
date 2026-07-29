@@ -9,8 +9,10 @@ export type ExportProgress =
   | { stage: 'render'; slide: number; slides: number; preset: number; presets: number }
   | { stage: 'zip' };
 
-// One store's set to export: its theme, its slides, and its ticked presets.
-export type ExportSet = { theme: Theme; slides: Slide[]; sizeIds: string[] };
+// One set to export: its theme, its slides, and its ticked presets. `label`
+// names the set in errors — with four sets in play, "ios-6.9 appears twice" is
+// not actionable without knowing which two sets asked for it.
+export type ExportSet = { label: string; theme: Theme; slides: Slide[]; sizeIds: string[] };
 
 // Yield with setTimeout(0), NEVER requestAnimationFrame: rAF goes to zero in
 // hidden tabs, and tabbing away mid-export is the normal case for a loop that
@@ -34,6 +36,32 @@ export async function exportAllZip(
   }
 
   const jobs = sets.flatMap((s) => s.sizeIds.map((sizeId) => ({ set: s, sizeId })));
+
+  // Folder names are size ids, and each set writes 01.png, 02.png … into its
+  // own. Two jobs sharing a folder would silently interleave and overwrite —
+  // one set's screenshots delivered under another set's name, which is the
+  // worst possible failure here because the zip still looks complete.
+  //
+  // Preset ids ARE disjoint across the four kinds, so this cannot happen
+  // through the UI. It was previously left as a comment asserting that. With
+  // four sets instead of two it is checked: an imported or hand-edited project
+  // can carry a preset that no longer belongs to its set, and the migration
+  // that filters those only runs on load.
+  const seen = new Map<string, string>();
+  for (const { set, sizeId } of jobs) {
+    const prior = seen.get(sizeId);
+    if (prior !== undefined && prior !== set.label) {
+      throw new Error(
+        `Both the ${prior} and ${set.label} sets are exporting ${sizeId}. ` +
+          `They would share one folder and overwrite each other.`,
+      );
+    }
+    if (prior !== undefined) {
+      throw new Error(`The ${set.label} set lists ${sizeId} twice in its export presets.`);
+    }
+    seen.set(sizeId, set.label);
+  }
+
   const zip = new JSZip();
 
   for (const [pi, { set, sizeId }] of jobs.entries()) {
