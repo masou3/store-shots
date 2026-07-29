@@ -42,6 +42,9 @@ export type LayoutPreset = {
   // has almost no vertical slack, so the side-text presets are landscape-only;
   // `angled` is portrait-only for the opposite reason (see LAYOUTS).
   orientations?: Orientation[];
+  // Orientations where this preset works but is the lesser choice. Offered
+  // last and visibly marked, never hidden — see LAYOUT_GROUPS.
+  demotedIn?: Orientation[];
 };
 
 // Two sizing contracts. Crop layouts size by width and position by bleed —
@@ -52,6 +55,7 @@ export type LayoutPreset = {
 export const LAYOUTS: LayoutPreset[] = [
   {
     id: 'top-text-crop',
+    demotedIn: ['landscape'],
     label: 'Top text, crop',
     textPosition: 'top',
     sizing: 'bleed',
@@ -64,6 +68,7 @@ export const LAYOUTS: LayoutPreset[] = [
   },
   {
     id: 'top-text-float',
+    demotedIn: ['landscape'],
     label: 'Top text, float',
     textPosition: 'top',
     sizing: 'slot',
@@ -76,6 +81,7 @@ export const LAYOUTS: LayoutPreset[] = [
   },
   {
     id: 'bottom-text-crop',
+    demotedIn: ['landscape'],
     label: 'Bottom text, crop',
     textPosition: 'bottom',
     sizing: 'bleed',
@@ -119,7 +125,7 @@ export const LAYOUTS: LayoutPreset[] = [
     bleed: 0.2,
     widthPct: 0.84,
     heightPct: 0.86,
-    bandPct: 0.4,
+    bandPct: 0.46,
     shadow: false,
     rotate: 0,
     orientations: ['landscape'],
@@ -134,7 +140,7 @@ export const LAYOUTS: LayoutPreset[] = [
     bleed: 0.2,
     widthPct: 0.84,
     heightPct: 0.86,
-    bandPct: 0.4,
+    bandPct: 0.46,
     shadow: false,
     rotate: 0,
     orientations: ['landscape'],
@@ -149,17 +155,48 @@ export const LAYOUTS: LayoutPreset[] = [
     bleed: 0,
     widthPct: 0.84,
     heightPct: 0.86,
-    bandPct: 0.4,
+    bandPct: 0.46,
     shadow: true,
     rotate: 0,
     orientations: ['landscape'],
   },
 ];
 
-// Presets offered for a given orientation. Angled disappears in landscape and
-// the side-text set disappears in portrait.
+// Presets offered for a given orientation, RECOMMENDED FIRST. Angled
+// disappears in landscape and the side-text set disappears in portrait;
+// top/bottom text survives landscape but sorts to the bottom.
 export function layoutsFor(orientation: Orientation): LayoutPreset[] {
-  return LAYOUTS.filter((l) => !l.orientations || l.orientations.includes(orientation));
+  return LAYOUTS.filter((l) => !l.orientations || l.orientations.includes(orientation)).sort(
+    (a, b) => Number(isDemoted(a, orientation)) - Number(isDemoted(b, orientation)),
+  );
+}
+
+export function isDemoted(preset: LayoutPreset, orientation: Orientation): boolean {
+  return !!preset.demotedIn?.includes(orientation);
+}
+
+// The picker's two sections. Grouping exists so the ONE place the device-shrink
+// warning is known to under-fire — landscape top text, which stops looking
+// deliberate at ~85% rather than the global 70% — is also the place a user has
+// been steered away from. A single global threshold is honest only if the
+// combination it is too lenient for is visibly the lesser option; otherwise the
+// number is merely convenient. Demoted presets are ordered last and labelled,
+// never hidden: they work, and someone who wants one should be able to pick it.
+export type LayoutGroup = { label: string | null; note: string | null; presets: LayoutPreset[] };
+
+export function layoutGroups(orientation: Orientation): LayoutGroup[] {
+  const all = layoutsFor(orientation);
+  const preferred = all.filter((l) => !isDemoted(l, orientation));
+  const lesser = all.filter((l) => isDemoted(l, orientation));
+  if (lesser.length === 0) return [{ label: null, note: null, presets: preferred }];
+  return [
+    { label: 'Recommended for landscape', note: null, presets: preferred },
+    {
+      label: 'Text above or below',
+      note: 'Works, but a landscape canvas has little height to spare — the device shrinks quickly as headlines get longer.',
+      presets: lesser,
+    },
+  ];
 }
 
 // The preset a slide should fall back to when its current one isn't offered in

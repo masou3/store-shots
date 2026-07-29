@@ -23,7 +23,7 @@ export const DEVICE_MAX_HEIGHT_PCT = 0.9;
 // before the theme's maxWidthPct narrows it. Fixed, never derived from the
 // measured text: see sideTextBandWidth in render.ts for why the whole contract
 // depends on that.
-export const SIDE_TEXT_BAND_PCT = 0.4;
+export const SIDE_TEXT_BAND_PCT = 0.46;
 
 // Text must stay at least this far in from every edge.
 export const SAFE_AREA_PCT = 0.08;

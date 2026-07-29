@@ -44,11 +44,17 @@ import type { SetClampState } from './render';
 // top text.
 //
 // 0.7 is kept as a single global anyway, because the one combination that
-// wants a stricter number is landscape top text — the layout the side-text
-// presets exist to replace, and which nobody should be using in landscape. For
-// every combination in normal use, 70% is the measured breaking point. If
-// landscape top text ever becomes a recommended layout, this has to become a
-// per-canvas number and the figures above are the starting point.
+// wants a stricter number is landscape top text — and the picker demotes it
+// (layoutGroups in layouts.ts): in landscape it sorts below the side-text
+// presets, renders dimmed, and carries a note saying the device shrinks
+// quickly. That is what makes the single number honest rather than merely
+// convenient — the place it under-fires is the place a user has been steered
+// away from, visibly, not just in a comment. For every combination in normal
+// use, 70% IS the measured breaking point.
+//
+// If landscape top text is ever promoted back to equal footing, this must
+// become per-canvas and the figures above are the starting point. The two
+// decisions are linked; do not change one without the other.
 const MIN_DEVICE_FRACTION = 0.7;
 
 // Long headlines get elided so the sentence stays readable in the sidebar.

@@ -13,7 +13,7 @@ import {
 } from '@/lib/storeKinds';
 import { exportAllZip, type ExportProgress, type ExportSet } from '@/lib/bulkExport';
 import { DEVICE_SPECS } from '@/lib/deviceSpecs';
-import { layoutsFor } from '@/lib/layouts';
+import { isDemoted, layoutGroups } from '@/lib/layouts';
 import { GRADIENT_PACKS } from '@/lib/presets';
 import { FONT_FAMILIES, loadRenderFonts } from '@/lib/fonts';
 import { copyWarning } from '@/lib/copyWarning';
@@ -1644,23 +1644,40 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
                   </button>
                 ))}
             </div>
-            {/* Scoped to the slide's orientation: side text is landscape-only
-                and angled is portrait-only, so an inapplicable preset is never
-                offered rather than offered and then quietly disappointing. */}
-            <div className="flex flex-col gap-1">
-              {layoutsFor(slideOrientation(slide)).map((l) => (
-                <button
-                  key={l.id}
-                  onClick={() => setLayoutId(l.id)}
-                  className={
-                    'rounded border px-2 py-1.5 text-left text-xs ' +
-                    (slide.layoutId === l.id
-                      ? 'border-indigo-500 bg-indigo-950 text-neutral-100'
-                      : 'border-neutral-700 text-neutral-400 hover:text-neutral-200')
-                  }
-                >
-                  {l.label}
-                </button>
+            {/* Scoped to the slide's orientation — side text is landscape-only,
+                angled portrait-only — and grouped so the lesser landscape
+                choice is visibly lesser rather than sitting on equal footing
+                with the ones that suit the canvas. */}
+            <div className="flex flex-col gap-2">
+              {layoutGroups(slideOrientation(slide)).map((group, gi) => (
+                <div key={group.label ?? gi}>
+                  {group.label && (
+                    <div className="mb-1 text-[10px] uppercase tracking-wide text-neutral-500">
+                      {group.label}
+                    </div>
+                  )}
+                  <div className="flex flex-col gap-1">
+                    {group.presets.map((l) => (
+                      <button
+                        key={l.id}
+                        onClick={() => setLayoutId(l.id)}
+                        className={
+                          'rounded border px-2 py-1.5 text-left text-xs ' +
+                          (slide.layoutId === l.id
+                            ? 'border-indigo-500 bg-indigo-950 text-neutral-100'
+                            : isDemoted(l, slideOrientation(slide))
+                              ? 'border-neutral-800 text-neutral-500 hover:text-neutral-300'
+                              : 'border-neutral-700 text-neutral-400 hover:text-neutral-200')
+                        }
+                      >
+                        {l.label}
+                      </button>
+                    ))}
+                  </div>
+                  {group.note && (
+                    <p className="mt-1 text-[11px] leading-snug text-neutral-600">{group.note}</p>
+                  )}
+                </div>
               ))}
             </div>
             {/* Per-screen orientation. Landscape swaps the canvas and lays the
