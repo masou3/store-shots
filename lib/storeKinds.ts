@@ -1,5 +1,5 @@
 import { STORE_RULES } from './sizes';
-import type { DeviceClass } from './types';
+import type { DeviceClass, Orientation } from './types';
 
 // A project holds up to four independent sets: each store crossed with each
 // device class. The active set's kind scopes device, sizes, caps, validateSize
@@ -110,10 +110,41 @@ export function isCrossClass(from: StoreKind, to: StoreKind): boolean {
 // wondering whether their colours survive — they are about to lose a layout
 // they spent time on, and a generic "this will overwrite" warning does not
 // tell them that.
-export function cloneEffect(from: StoreKind, to: StoreKind): { carries: string; drops: string } | null {
+// The orientation a cloned slide should land in.
+//
+// Same-class: keep the source's, because the composition is being kept too and
+// turning it would invalidate the layout that came with it.
+//
+// Cross-class: adopt the TARGET set's default. The composition is discarded
+// either way, so there is nothing left for the source orientation to be
+// consistent with — and the orientation a tablet set wants is a property of
+// that set, not of the phone set it was seeded from. A portrait phone set
+// cloned into a landscape tablet set should arrive landscape rather than
+// leaving every screen to be flipped by hand. With no target default declared
+// (the target does not exist yet, or was never set) the source's orientation
+// is still the best guess available.
+export function cloneOrientationFor(
+  crossClass: boolean,
+  source: Orientation | undefined,
+  targetDefault: Orientation | undefined,
+): Orientation | undefined {
+  return crossClass ? (targetDefault ?? source) : source;
+}
+
+export function cloneEffect(
+  from: StoreKind,
+  to: StoreKind,
+  targetDefault?: Orientation,
+): { carries: string; drops: string } | null {
   if (!isCrossClass(from, to)) return null;
   const fromClass = STORE_KINDS[from].deviceClass;
   const toClass = STORE_KINDS[to].deviceClass;
+  // Naming the orientation matters because cross-class now IMPOSES it rather
+  // than carrying it across; silently re-orienting someone's screens would be
+  // the same class of surprise as silently dropping their layout.
+  const orientation = targetDefault
+    ? `Every screen arrives ${targetDefault}, on the default layout for that orientation.`
+    : `Every screen keeps its orientation and starts on the default layout for it.`;
   return {
     // Each half is a complete sentence on its own, because the banner leads
     // with `drops` — a fragment like "layout and nudges do not" reads as
@@ -121,8 +152,7 @@ export function cloneEffect(from: StoreKind, to: StoreKind): { carries: string; 
     drops:
       `Layout, text nudges and screenshots will NOT carry over: a ${fromClass} canvas ` +
       `and a ${toClass} one are too different in shape to share a composition, and a ` +
-      `${fromClass} capture would be cropped wrong in a ${toClass} frame. Every screen ` +
-      `starts on the default layout for its orientation.`,
+      `${fromClass} capture would be cropped wrong in a ${toClass} frame. ${orientation}`,
     carries: 'Background, colours, type and headline text do carry over.',
   };
 }

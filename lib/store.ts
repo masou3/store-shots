@@ -9,7 +9,13 @@ import {
   type LayoutId,
 } from './layouts';
 import { clearAllImages, ensureBitmap, getImageBlob, removeImage, saveImage } from './imageStore';
-import { STORE_KINDS, capFor, otherStore, type StoreKind } from './storeKinds';
+import {
+  STORE_KINDS,
+  capFor,
+  cloneOrientationFor,
+  otherStore,
+  type StoreKind,
+} from './storeKinds';
 import {
   loadProjectLocal,
   saveProjectLocal,
@@ -237,6 +243,13 @@ export const useStore = create<StoreState>((set, get) => {
       // carries the LOOK — gradient, colours, type, grain, texture — plus the
       // words, and rebuilds everything positional from the target's defaults.
       const crossClass = STORE_KINDS[from].deviceClass !== cfg.deviceClass;
+      // The target's OWN default orientation, read before it is replaced. On a
+      // cross-class clone this is what the incoming slides adopt, so it has to
+      // survive the replacement too — overwriting it with the source's default
+      // would wipe the setting the clone is supposed to be honouring, and the
+      // second clone into the same target would then behave differently from
+      // the first.
+      const targetDefault = state.sets[to]?.defaultOrientation;
 
       // Truncate to the target's cap, cutting from the END — slide 1 matters
       // most in both stores, so the tail is what goes. App Store (10) → Play
@@ -259,10 +272,11 @@ export const useStore = create<StoreState>((set, get) => {
         }
       }
       const slides: Slide[] = kept.map((sl) => {
-        // Orientation is not composition — it says which way the screen is
-        // held, and both classes support both — so it survives the class
-        // change and picks the layout appropriate to it.
-        const orientation = sl.orientation;
+        // Same-class keeps the source's orientation; cross-class adopts the
+        // target set's default, since the composition is discarded anyway and
+        // the orientation a tablet set wants belongs to that set rather than
+        // to the phone set it was seeded from. See cloneOrientationFor.
+        const orientation = cloneOrientationFor(crossClass, sl.orientation, targetDefault);
         const layoutId = crossClass
           ? defaultLayoutFor(orientation ?? 'portrait')
           : sl.layoutId;
@@ -310,7 +324,9 @@ export const useStore = create<StoreState>((set, get) => {
         currentSlideId: slides[0].id,
         sizeId: cfg.defaultSizeId,
         exportSizeIds: [cfg.defaultSizeId],
-        defaultOrientation: src.defaultOrientation,
+        defaultOrientation: crossClass
+          ? (targetDefault ?? src.defaultOrientation)
+          : src.defaultOrientation,
       };
       // Re-clone overwrites: drop the old target's orphaned blobs (screenshots,
       // background photos and its panorama).

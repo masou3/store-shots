@@ -1,6 +1,7 @@
 import JSZip from 'jszip';
 import type { Slide, Theme } from './types';
-import { getSize, slideSize, STORE_RULES, validateSize } from './sizes';
+import { getSize, slideOrientation, slideSize, STORE_RULES, validateSize } from './sizes';
+import { buildReadme } from './exportReadme';
 import { measureSetTextZone, renderSlide, zoneForSlide } from './render';
 import { encodeRgbPng } from './png';
 import { assertRenderFonts, loadRenderFonts } from './fonts';
@@ -63,6 +64,23 @@ export async function exportAllZip(
   }
 
   const zip = new JSZip();
+
+  // Which folders come out landscape, so the README can mark them: a folder is
+  // landscape when every slide in its set is. A mixed set is left unmarked
+  // rather than described wrongly.
+  const landscapeDirs = new Set<string>();
+  for (const s of sets) {
+    if (s.slides.length > 0 && s.slides.every((sl) => slideOrientation(sl) === 'landscape')) {
+      for (const id of s.sizeIds) landscapeDirs.add(id);
+    }
+  }
+  zip.file(
+    'README.txt',
+    buildReadme(
+      sets.map((s) => ({ label: s.label, sizeIds: s.sizeIds, slideCount: s.slides.length })),
+      landscapeDirs,
+    ),
+  );
 
   for (const [pi, { set, sizeId }] of jobs.entries()) {
     const size = getSize(sizeId);

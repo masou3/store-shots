@@ -975,7 +975,7 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
     const targetCap = capFor(to).max;
     const willTruncate = slides.length > targetCap;
     const willOverwrite = !!store.sets[to];
-    const effect = cloneEffect(activeStore, to);
+    const effect = cloneEffect(activeStore, to, store.sets[to]?.defaultOrientation);
     if (!willTruncate && !willOverwrite && !effect) {
       void runClone(to);
       return;
