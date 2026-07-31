@@ -77,6 +77,8 @@ type StatusMetrics = {
   // captures, an iOS-depth band (the full 0.125 bar) reached 135 source px into
   // a 1080-wide Android capture whose first label starts at 114, and sliced it
   // in half. This is also where the plate samples its colour from.
+  // Binds only where it exceeds the clock seat, i.e. on the tablets — see
+  // bandDepth, which is the only place it is read.
   captureGlyphPct: number;
   centrePct: number; // vertical centre of the glyph row
   fontPct: number;
@@ -96,6 +98,20 @@ type StatusMetrics = {
 // Plate depth: enough to hide the capture's own bar AND to seat our glyphs,
 // and not one pixel more — every extra pixel is app content flattened to a
 // single colour.
+//
+// WHICH TERM BINDS is not the same across devices, and the second one is easy
+// to forget. On the PHONES the clock seat wins: both OSes sit the clock on the
+// cutout centre, which is far below the capture's own glyph ink, so
+// captureGlyphPct never binds there and editing it changes nothing. On the
+// TABLETS there is no cutout in the bar, the clock sits at the bar's own
+// centre, and captureGlyphPct is what binds.
+//
+// The phone case has a cost worth knowing: seating the Pixel's clock on its
+// punch-hole puts the band at 0.111, or 120px on a 1080-wide capture, and the
+// Ludwig captures start their first label ink at 114px — so ~6px of it is
+// plated over. That is the floor, not a bug to tune out: the band cannot be
+// shallower than the clock it has to seat, and moving the clock off the
+// punch-hole to save 6px would break the thing the bar exists to imitate.
 function bandDepth(m: StatusMetrics): number {
   return Math.max(m.captureGlyphPct, m.centrePct + m.fontPct * 0.5);
 }
@@ -138,7 +154,13 @@ const STATUS_METRICS: Record<string, StatusMetrics> = {
   'ipad-pro-13': {
     platform: 'ios',
     captureGlyphPct: 0.02, // glyph ink of a 24pt bar on a 1024pt-wide screen
-    centrePct: 0.018,
+    // The 24pt bar's own centre — 12pt on a 1024pt-wide screen. Unlike the
+    // phones there is no cutout in the bar to pin this to (the M4 iPad's camera
+    // sits on a side edge in portrait), so it is the bar geometry or nothing.
+    // It was estimated at 0.018 first, which put the clock at 18.4pt: three
+    // quarters of the way down a 24pt bar, ink touching the bottom edge, and a
+    // band 2.6pt DEEPER than the bar it is meant to sit inside.
+    centrePct: 0.0117,
     fontPct: 0.016,
     weight: 600,
     sideInsetPct: 0.03,
@@ -151,13 +173,22 @@ const STATUS_METRICS: Record<string, StatusMetrics> = {
   'android-tablet-11': {
     platform: 'android',
     captureGlyphPct: 0.024,
-    centrePct: 0.019,
+    // Centre of the 24dp bar on an 800dp-wide panel (Pixel Tablet: 2560x1600 at
+    // 2.0). Same correction as the iPad's, and the same cause — no cutout in the
+    // bar to pin it to.
+    centrePct: 0.015,
     fontPct: 0.016,
     weight: 600,
     sideInsetPct: 0.03,
     gapPct: 0.008,
     captureChromePct: 0.018,
-    indicatorWidthPct: 0.25,
+    // 108dp on an 800dp-wide panel. Android's gesture handle is a FIXED 108dp
+    // and does not scale with the screen — unlike iOS, which really does widen
+    // its indicator on a tablet (139pt on a phone, ~315pt on an iPad, which is
+    // why ipad-pro-13 keeps a phone-like 0.30 and this does not). Estimated at
+    // 0.25 first, by analogy with the iPad entry: 200dp, nearly double the only
+    // width Android ever draws.
+    indicatorWidthPct: 0.135,
     indicatorHeightPct: 0.005,
     indicatorGapPct: 0.012,
   },

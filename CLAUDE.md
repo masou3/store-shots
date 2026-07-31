@@ -48,10 +48,22 @@ Each is load-bearing and easy to "fix" back into a bug.
   are one mechanism seen twice: plate over whatever the capture's own OS drew, then draw
   the target platform's. The pills are not interchangeable — iOS's is 0.32 of screen
   width sitting 0.018 up, Android's 0.262 sitting 0.025 up — and swapping them is most of
-  what stops an Android capture reading as one. Each band is sized to the capture's
+  what stops an Android capture reading as one. The tablet pills look inconsistent and
+  are not: the iPad keeps a phone-like 0.30 while the Android tablet drops to 0.135,
+  because iOS genuinely widens its indicator on a tablet (139pt on a phone, ~315pt on an
+  iPad) and Android does not — its handle is a fixed 108dp at every screen size. Scaling
+  the Android tablet's off the iPad's by analogy is exactly the bug that put it at 0.25,
+  i.e. 200dp, nearly double the only width Android ever draws. Each band is sized to the capture's
   GLYPH INK plus what our own chrome needs to sit on, never to the platform's full bar
   height: the empty rows below a capture's clock are just app background, and plating
-  them costs real content. The plate also overdraws past the screen edge, because the
+  them costs real content. Which of those two terms actually binds flips by device, and
+  the tablets are the ones people get wrong: on the PHONES the clock seat wins, because
+  both OSes sit the clock on the cutout centre and `captureGlyphPct` never binds there;
+  on the TABLETS there is no cutout in the bar, so the glyph ink binds. The phone case
+  has a floor worth knowing — seating the Pixel's clock on its punch-hole puts the band
+  at 120px on a 1080-wide capture, ~6px into where the Ludwig captures' first label
+  starts. That is the floor, not a bug: the band cannot be shallower than the clock it
+  seats. The plate also overdraws past the screen edge, because the
   clip's sub-pixel boundary otherwise leaves a sliver of the capture's own pill sitting
   right on the edge. Note the limit this cannot fix: an Android app laid out without
   iOS's 34pt bottom safe area puts its tab labels where the iOS indicator goes, so on an
