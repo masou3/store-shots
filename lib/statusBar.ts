@@ -33,6 +33,20 @@ export type StatusBarConfig = {
   // clock it is the loudest platform tell a capture carries, and the only
   // other one that is OS chrome rather than the app's own design.
   homeIndicator: boolean;
+  // Vertical trim on each end, as a fraction of the screen's SHORT side (the
+  // unit every other metric here uses, so a nudge means the same thing in
+  // portrait and landscape). POSITIVE IS DOWN THE SCREEN for both, which for
+  // the indicator means shrinking its gap from the bottom edge — the two
+  // sliders then move the same way to the eye rather than mirroring.
+  //
+  // The table's numbers are right for the panels they describe, but a capture
+  // is only ever as well-placed as the app that drew it: an app that lays out
+  // to its own idea of the safe area lands a few points off ours, and no
+  // per-device constant can know that. Set-wide, like the clock and for the
+  // same reason — chrome sitting at a different height on each screen of a set
+  // reads as a bug rather than as variety.
+  barNudge: number;
+  indicatorNudge: number;
 };
 
 // Undefined theme.statusBar (every project saved before this existed) reads as
@@ -43,7 +57,23 @@ export const DEFAULT_STATUS_BAR: StatusBarConfig = {
   style: 'auto',
   plate: true,
   homeIndicator: true,
+  barNudge: 0,
+  indicatorNudge: 0,
 };
+
+// How far either end can be trimmed, as a fraction of the short side. ~3% is
+// 13pt on an iPhone's 440pt screen — enough to cover an app that missed the
+// safe area, small enough that the slider stays a trim rather than a way to
+// park the clock in the middle of the screen.
+export const NUDGE_LIMIT = 0.03;
+
+// Clamped at the draw call rather than trusted from the config: a project file
+// is user-editable JSON, and a hand-typed 0.5 there would put the clock a fifth
+// of the way down the screen with no clue why. The `?? 0` covers a theme saved
+// between the bar shipping and the nudge existing.
+function clampNudge(n: number | undefined): number {
+  return Math.max(-NUDGE_LIMIT, Math.min(NUDGE_LIMIT, n ?? 0));
+}
 
 // Merged, not returned raw: a theme saved before a field existed carries the
 // older shape, and `undefined` on a boolean would read as off. Spreading the
@@ -112,8 +142,14 @@ type StatusMetrics = {
 // plated over. That is the floor, not a bug to tune out: the band cannot be
 // shallower than the clock it has to seat, and moving the clock off the
 // punch-hole to save 6px would break the thing the bar exists to imitate.
-function bandDepth(m: StatusMetrics): number {
-  return Math.max(m.captureGlyphPct, m.centrePct + m.fontPct * 0.5);
+//
+// The nudge feeds the SEAT term only, never the cover term. Trimming the clock
+// down grows the band so it stays seated; trimming it up leaves the band at
+// captureGlyphPct, because the capture's own bar has not moved and still has to
+// be covered. That asymmetry is the point — otherwise nudging up would uncover
+// the very thing the plate exists to hide.
+function bandDepth(m: StatusMetrics, nudge: number): number {
+  return Math.max(m.captureGlyphPct, m.centrePct + nudge + m.fontPct * 0.5);
 }
 
 // Phones sit their bar in line with the cutout (island centre / punch-hole
@@ -276,12 +312,15 @@ function drawStatusBar(ctx: Ctx2D, d: StatusBarDraw): void {
   const m = statusMetricsFor(d.spec, d.theme);
   const unit = Math.min(d.rw, d.rh);
   const top = -d.rh / 2;
-  const cy = top + m.centrePct * unit;
+  const nudge = clampNudge(cfg.barNudge);
+  const cy = top + (m.centrePct + nudge) * unit;
   const font = m.fontPct * unit;
   const inset = m.sideInsetPct * unit;
 
+  // Sample depth stays on captureGlyphPct, untouched by the nudge: it is where
+  // the CAPTURE's own bar ends, which the trim does not move.
   if (cfg.plate && d.bmp && d.fit) {
-    drawPlate(ctx, d, bandDepth(m) * unit, m.captureGlyphPct * unit);
+    drawPlate(ctx, d, bandDepth(m, nudge) * unit, m.captureGlyphPct * unit);
   }
 
   const colour = chromeIsLight(cfg, d.bmp, 'top') ? '#ffffff' : '#000000';
@@ -322,11 +361,16 @@ function drawHomeIndicator(ctx: Ctx2D, d: StatusBarDraw): void {
   const m = statusMetricsFor(d.spec, d.theme);
   const unit = Math.min(d.rw, d.rh);
   const h = m.indicatorHeightPct * unit;
-  const gap = m.indicatorGapPct * unit;
+  // Positive nudge is DOWN, and this gap is measured UP from the bottom edge,
+  // so the trim subtracts. Floored at 0: past that the pill would sit off the
+  // screen entirely, and a slider that can make a control vanish is a bug
+  // report waiting to happen.
+  const gapPct = Math.max(0, m.indicatorGapPct - clampNudge(cfg.indicatorNudge));
+  const gap = gapPct * unit;
   // Cover the capture's own indicator, and seat ours. Shallow by design: the
   // bottom of an app screen is usually its tab bar, and every plated pixel
   // above the pill is a tab label flattened away.
-  const band = Math.max(m.captureChromePct, m.indicatorGapPct + m.indicatorHeightPct) * unit;
+  const band = Math.max(m.captureChromePct, gapPct + m.indicatorHeightPct) * unit;
 
   if (cfg.plate && d.bmp && d.fit) {
     drawPlate(ctx, d, band, m.captureChromePct * unit, 'bottom');

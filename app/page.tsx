@@ -16,6 +16,7 @@ import {
 import { exportAllZip, type ExportProgress, type ExportSet } from '@/lib/bulkExport';
 import { DEVICE_SPECS, getSpec } from '@/lib/deviceSpecs';
 import {
+  NUDGE_LIMIT,
   STANDARD_TIME,
   platformFor,
   statusBarOf,
@@ -151,6 +152,15 @@ function DuotoneControls({
   );
 }
 
+// Spelled "up"/"down" rather than signed, because the sign alone reads as
+// ambiguous on the bottom pill — positive there shrinks a gap measured up from
+// the screen edge, which is a plus sign that visibly moves something down.
+function nudgeLabel(n: number | undefined): string {
+  const v = n ?? 0;
+  if (!v) return 'none';
+  return `${Math.abs(v * 100).toFixed(1)}% ${v > 0 ? 'down' : 'up'}`;
+}
+
 // The status bar drawn over the capture. Off/on is the only control most sets
 // need; the time box and glyph colour stay visible only once it's on, and the
 // time placeholder shows the platform standard it will use if left blank.
@@ -204,6 +214,17 @@ function StatusBarControls({
             />
             Cover the capture&rsquo;s own bar
           </label>
+          <Row label={`Bar nudge ${nudgeLabel(config.barNudge)}`}>
+            <input
+              type="range"
+              min={-NUDGE_LIMIT}
+              max={NUDGE_LIMIT}
+              step={0.001}
+              value={config.barNudge ?? 0}
+              onChange={(e) => onChange({ ...config, barNudge: Number(e.target.value) })}
+              className="w-36"
+            />
+          </Row>
         </>
       )}
       <label className="flex items-center gap-2 text-xs text-neutral-400">
@@ -214,6 +235,25 @@ function StatusBarControls({
         />
         Home indicator ({platform === 'ios' ? 'iOS pill' : 'Android'})
       </label>
+      {config.homeIndicator && (
+        <Row label={`Pill nudge ${nudgeLabel(config.indicatorNudge)}`}>
+          <input
+            type="range"
+            min={-NUDGE_LIMIT}
+            max={NUDGE_LIMIT}
+            step={0.001}
+            value={config.indicatorNudge ?? 0}
+            onChange={(e) => onChange({ ...config, indicatorNudge: Number(e.target.value) })}
+            className="w-36"
+          />
+        </Row>
+      )}
+      {config.barNudge || config.indicatorNudge ? (
+        <p className="text-[11px] leading-snug text-neutral-600">
+          Nudges are a fraction of the screen&rsquo;s short side, so they hold their look
+          across sizes and orientations — and apply to every screen in the set.
+        </p>
+      ) : null}
     </>
   );
 }
