@@ -47,6 +47,17 @@ export type StatusBarConfig = {
   // reads as a bug rather than as variety.
   barNudge: number;
   indicatorNudge: number;
+  // Horizontal trim on the CLOCK only, positive to the right, in the same unit
+  // as the two above. The icons do not move: they are anchored to the opposite
+  // margin and the gap between them is the thing that has to stay right.
+  //
+  // Separate from barNudge rather than folded into one 2D offset because the
+  // two are not the same kind of correction. The vertical one moves the whole
+  // bar to meet an app that laid out to its own idea of the safe area; this one
+  // moves one glyph run because where an OS parks its clock is a judgement
+  // call our constants make once per device and cannot make per capture. Both
+  // set-wide, for the reason every other field here is.
+  clockNudge: number;
 };
 
 // Undefined theme.statusBar (every project saved before this existed) reads as
@@ -59,6 +70,7 @@ export const DEFAULT_STATUS_BAR: StatusBarConfig = {
   homeIndicator: true,
   barNudge: 0,
   indicatorNudge: 0,
+  clockNudge: 0,
 };
 
 // How far either end can be trimmed, as a fraction of the short side. ~3% is
@@ -67,12 +79,28 @@ export const DEFAULT_STATUS_BAR: StatusBarConfig = {
 // park the clock in the middle of the screen.
 export const NUDGE_LIMIT = 0.03;
 
+// The clock's sideways travel is much larger than the vertical trim, and has to
+// be: on an iPhone the whole gap between the screen edge and the Dynamic Island
+// is ~0.355 of the width, and the useful range covers most of it.
+//
+// 0.1 is what the island leaves room for. Measured off the rendered pixels
+// rather than reasoned about — "9:41" is 0.072 of the screen width, not the
+// ~0.045 a glance at fontPct suggests — the far end puts the clock's right edge
+// at 0.3125 against an island starting at 0.3569. Raising the limit past ~0.14
+// would start closing that gap, so this is not a number to nudge upward without
+// re-measuring.
+export const CLOCK_NUDGE_LIMIT = 0.1;
+
 // Clamped at the draw call rather than trusted from the config: a project file
 // is user-editable JSON, and a hand-typed 0.5 there would put the clock a fifth
 // of the way down the screen with no clue why. The `?? 0` covers a theme saved
 // between the bar shipping and the nudge existing.
 function clampNudge(n: number | undefined): number {
   return Math.max(-NUDGE_LIMIT, Math.min(NUDGE_LIMIT, n ?? 0));
+}
+
+function clampClockNudge(n: number | undefined): number {
+  return Math.max(-CLOCK_NUDGE_LIMIT, Math.min(CLOCK_NUDGE_LIMIT, n ?? 0));
 }
 
 // Merged, not returned raw: a theme saved before a field existed carries the
@@ -333,20 +361,120 @@ function drawStatusBar(ctx: Ctx2D, d: StatusBarDraw): void {
   ctx.textBaseline = 'middle';
   ctx.font = `${m.weight} ${font}px ${interFontFamily()}`;
 
-  // iOS centres the clock in the gap left of the Dynamic Island; Android (and
-  // every tablet) left-aligns it at the margin.
-  const island = d.spec.cutout;
-  if (m.platform === 'ios' && d.portrait && island.kind === 'dynamic-island') {
-    ctx.textAlign = 'center';
-    const islandLeft = -(island.wPct * d.rw) / 2;
-    ctx.fillText(time, (-d.rw / 2 + inset + islandLeft) / 2, cy);
-  } else {
-    ctx.textAlign = 'left';
-    ctx.fillText(time, -d.rw / 2 + inset, cy);
-  }
+  const clock = clockPlacement(d);
+  ctx.textAlign = clock.align === 'centre' ? 'center' : 'left';
+  ctx.fillText(time, clock.x, cy);
 
+  // The icons do NOT take the clock's nudge. They are anchored to the opposite
+  // margin, where the OS puts them and where nothing about a capture can move
+  // them; the gap between them is the thing that has to stay right.
   drawIcons(ctx, m.platform, d.rw / 2 - inset, cy, font, m.gapPct * unit, colour);
   ctx.restore();
+}
+
+// Breathing room between the clock's left edge and whatever bounds it, once the
+// corner has been accounted for. Small — this is a "don't let the slider hide
+// the control" margin, the same call indicatorGapPct's floor makes.
+const CLOCK_EDGE_MARGIN = 0.008;
+
+// How far the screen's rounded corner has eaten into the left edge by the time
+// it reaches row `dy` (measured down from the top edge). Zero once past the
+// radius. The status bar is the one thing on screen drawn high enough for this
+// to matter: the screen clip in drawDevice is a roundRect, so anything up here
+// near the left edge is sliced by the corner, and the clock is the only piece
+// of chrome that can be moved into it.
+function cornerInsetAt(dy: number, radius: number): number {
+  if (dy >= radius || radius <= 0) return 0;
+  return radius - Math.sqrt(Math.max(0, radius * radius - (radius - dy) ** 2));
+}
+
+export type ClockPlacement = { x: number; align: 'left' | 'centre' };
+
+// WHERE THE CLOCK SITS, computed once and read by both the draw call above and
+// clockBox below (which is what the preview drag hit-tests against). Same
+// reason renderSlide and hitRegions share computeSlideGeom: a drag that grabs
+// somewhere the glyphs aren't is worse than having no drag at all.
+export function clockPlacement(d: StatusBarDraw): ClockPlacement {
+  const m = statusMetricsFor(d.spec, d.theme);
+  const cfg = statusBarOf(d.theme);
+  const unit = Math.min(d.rw, d.rh);
+  const nudge = clampClockNudge(cfg.clockNudge) * unit;
+  const island = d.spec.cutout;
+  const centred = m.platform === 'ios' && d.portrait && island.kind === 'dynamic-island';
+
+  // iOS centres the clock in the gap left of the Dynamic Island — and the gap
+  // is measured from the SCREEN EDGE, not from the side inset. The inset
+  // positions the icons on the other end; it is not a bound on this gap, and
+  // including it here put the clock at (0.048 + 0.355) / 2 = 0.2015 of the
+  // width instead of 0.355 / 2 = 0.1775. That is inset/2 = 0.024 of the width,
+  // 10.6pt on a 440pt screen, and it read as the clock drifting toward centre.
+  // Android and both tablets left-align at the margin instead.
+  const base = centred
+    ? (-d.rw / 2 - (island.wPct * d.rw) / 2) / 2
+    : -d.rw / 2 + m.sideInsetPct * unit;
+
+  // The leftmost the GLYPH RUN may start. Not a flat margin from the screen
+  // edge: on the tablets the bar sits so close to the top (centrePct 0.0117 on
+  // the iPad) that the corner radius is still cutting in at the clock's row,
+  // and a flat floor drove the clock into it — measured, the leading glyph came
+  // back 0.019 of the width wide instead of 0.0285, i.e. sliced. The iPad ends
+  // up with almost no leftward travel, which is not a bug: its clock already
+  // sits about as far left as its own corner allows.
+  const dy = (m.centrePct + clampNudge(cfg.barNudge)) * unit;
+  const minLeft =
+    -d.rw / 2 + cornerInsetAt(dy, d.spec.screenRadiusPct * unit) + CLOCK_EDGE_MARGIN * unit;
+  // Half a glyph run for the centred branch, nothing for the left-aligned one —
+  // either way this converts "leftmost edge" into "leftmost anchor".
+  const half = centred ? clockWidth(m, cfg, unit) / 2 : 0;
+  // Never right of `base`: nudge 0 has to draw exactly where it always did on
+  // every device, so the floor may only ever restrict LEFTWARD travel.
+  const floor = Math.min(base, minLeft + half);
+  return { x: Math.max(base + nudge, floor), align: centred ? 'centre' : 'left' };
+}
+
+// Measuring the glyph run needs a ctx of its own — clockBox is called from the
+// preview's hit-testing, which has no drawing context in hand. Cached on the
+// module like lumaCtx and rowCtx, for the same reason: this runs per pointer
+// move and must not allocate.
+let textCtx: Ctx2D | null = null;
+
+function clockWidth(m: StatusMetrics, cfg: StatusBarConfig, unit: number): number {
+  const font = m.fontPct * unit;
+  const time = (cfg.time ?? STANDARD_TIME[m.platform]).trim();
+  if (!textCtx) {
+    const c = new OffscreenCanvas(1, 1).getContext('2d');
+    // Only ever bounds a hit box or a floor, so a rough fallback beats throwing.
+    if (!c) return font * time.length * 0.55;
+    textCtx = c;
+  }
+  textCtx.font = `${m.weight} ${font}px ${interFontFamily()}`;
+  return textCtx.measureText(time).width;
+}
+
+// The clock's grab box in the CHROME frame — origin at the screen centre,
+// already counter-rotated for landscape, i.e. the space drawStatusBar draws in.
+// The caller maps it out to canvas coordinates, because only the caller knows
+// how far the device has been turned.
+export function clockBox(d: StatusBarDraw): { cx: number; cy: number; w: number; h: number } {
+  const m = statusMetricsFor(d.spec, d.theme);
+  const cfg = statusBarOf(d.theme);
+  const unit = Math.min(d.rw, d.rh);
+  const font = m.fontPct * unit;
+  const w = clockWidth(m, cfg, unit);
+  const { x, align } = clockPlacement(d);
+  // Same expression drawStatusBar uses for its baseline, deliberately: the box
+  // has to follow the bar's vertical trim or the grab drifts off the glyphs.
+  const cy = -d.rh / 2 + (m.centrePct + clampNudge(cfg.barNudge)) * unit;
+  // Padded well past the ink. The tablets' clock is 0.016 of the short side —
+  // at preview scale that is a couple of CSS pixels tall, and a hit box drawn
+  // tight to it is a control nobody can catch.
+  const pad = font * 0.6;
+  return {
+    cx: align === 'centre' ? x : x + w / 2,
+    cy,
+    w: w + pad * 2,
+    h: font + pad * 2,
+  };
 }
 
 // The status bar's opposite number. Same two steps — plate over whatever the

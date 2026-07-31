@@ -21,7 +21,7 @@ import { drawGrain } from './grain';
 import { wrapRichText, lineWidth, type RichLine } from './text';
 import { resolveFontFamily } from './fonts';
 import { getBitmap } from './images';
-import { drawScreenChrome, type ScreenFit } from './statusBar';
+import { clockBox, drawScreenChrome, statusBarOf, type ScreenFit } from './statusBar';
 import {
   ASCENT_EM,
   BUTTON_THICKNESS_PCT,
@@ -364,9 +364,41 @@ export function renderSlide(
   ctx.restore();
 }
 
+// The screen rect as the OS chrome sees it. A framed landscape slide turns the
+// silhouette 90° and counter-turns the capture back, so inside that frame the
+// screen's width and height are swapped relative to the canvas. Derived once
+// here and shared by the draw (drawDevice) and the hit-test (hitRegions), the
+// same way both share computeSlideGeom.
+function chromeRect(geo: DeviceGeometry): { rw: number; rh: number; portrait: boolean } {
+  return {
+    rw: geo.imageCounterDeg ? geo.screenH : geo.screenW,
+    rh: geo.imageCounterDeg ? geo.screenW : geo.screenH,
+    portrait: geo.imageCounterDeg === 0,
+  };
+}
+
 export type HitRegions = {
   device: { cx: number; cy: number; w: number; h: number };
   text: { x: number; y: number; w: number; h: number };
+  // The status bar clock, when there is a bar to grab one from. Null when the
+  // bar is switched off.
+  //
+  // Mixed frames on purpose: cx/cy are canvas coordinates (where the box is),
+  // while w/h are in the CHROME frame (how big it is along the screen's own
+  // axes). rotationDeg is what relates them — the caller rotates a pointer, or
+  // a pointer delta, by -rotationDeg to work in the screen's left/right rather
+  // than the canvas's. An axis-aligned bbox would lose the axis the drag needs.
+  clock: {
+    cx: number;
+    cy: number;
+    w: number;
+    h: number;
+    rotationDeg: number;
+    // The chrome frame's short side, the unit every statusBar.ts metric is a
+    // fraction of. Handed out so the caller can turn a drag in canvas pixels
+    // into a nudge without re-deriving the screen rect.
+    unit: number;
+  } | null;
 };
 
 // Axis-aligned bounding boxes (store coords) of the device and the text block,
@@ -385,6 +417,30 @@ export function hitRegions(
   return {
     device: { cx: geo.cx, cy: geo.cy, w: geo.bboxW, h: geo.bboxH },
     text: { x: blockLeft, y: blockTop, w: text.maxW, h: text.blockH },
+    clock: clockRegion(geo, theme),
+  };
+}
+
+// The clock's grab box, mapped out of the chrome frame and onto the canvas.
+// drawDevice reaches that frame by translating to the device centre, rotating
+// by rotationDeg, then rotating again by imageCounterDeg — so a point in it
+// lands on canvas at centre + R(rotationDeg + imageCounterDeg) · p. Rotations
+// about the same origin add, which is the only reason this is two lines.
+function clockRegion(geo: DeviceGeometry, theme: Theme): HitRegions['clock'] {
+  if (!statusBarOf(theme).show) return null;
+  const { rw, rh, portrait } = chromeRect(geo);
+  const box = clockBox({ rw, rh, bmp: null, fit: null, spec: geo.spec, theme, portrait });
+  const rotationDeg = geo.rotationDeg + geo.imageCounterDeg;
+  const rad = (rotationDeg * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  return {
+    cx: geo.cx + box.cx * cos - box.cy * sin,
+    cy: geo.cy + box.cx * sin + box.cy * cos,
+    w: box.w,
+    h: box.h,
+    rotationDeg,
+    unit: Math.min(rw, rh),
   };
 }
 
@@ -1023,8 +1079,7 @@ function drawDevice(
   // with matched aspect. Portrait (imageCounterDeg 0) is unchanged. The status
   // bar shares this frame: it belongs to the capture, not to the silhouette,
   // so it must read upright alongside it.
-  const rw = geo.imageCounterDeg ? screenH : screenW;
-  const rh = geo.imageCounterDeg ? screenW : screenH;
+  const { rw, rh, portrait } = chromeRect(geo);
   let fit: ScreenFit | null = null;
   if (bmp) {
     const s =
@@ -1048,7 +1103,7 @@ function drawDevice(
     fit,
     spec,
     theme,
-    portrait: geo.imageCounterDeg === 0,
+    portrait,
   });
   ctx.restore();
   ctx.restore();

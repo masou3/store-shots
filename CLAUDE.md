@@ -68,6 +68,25 @@ Each is load-bearing and easy to "fix" back into a bug.
   right on the edge. Note the limit this cannot fix: an Android app laid out without
   iOS's 34pt bottom safe area puts its tab labels where the iOS indicator goes, so on an
   iPhone frame the two collide no matter what the plate does.
+- **The clock's gap is measured from the SCREEN EDGE, and its floor comes from the
+  corner radius** (`lib/statusBar.ts` `clockPlacement`). iOS centres the clock in the gap
+  left of the Dynamic Island, and that gap runs from the screen edge — not from
+  `sideInsetPct`, which bounds the ICONS at the other end and is not a bound on this gap.
+  Folding it in halves it into the answer and puts the clock at (0.048 + 0.355) / 2 =
+  0.2015 of the width instead of 0.355 / 2 = 0.1775; that is 10.6pt on a 440pt screen and
+  it reads as the clock drifting toward centre. Measured back off rendered pixels at
+  0.1767 against an island starting at 0.3569. The horizontal nudge that trims it is
+  floored, and the floor is NOT a flat margin from the edge: the screen clip is a
+  roundRect, and on the tablets the bar sits so high (iPad `centrePct` 0.0117) that the
+  corner is still cutting in at the clock's own row, so a flat floor drove the clock into
+  it and sliced the leading glyph — ink came back 0.019 of the width wide instead of
+  0.0285. `cornerInsetAt` computes where the clip actually is at that row. Two
+  consequences that look wrong and aren't: the iPad ends up with almost no leftward
+  travel, because its clock already sits about as far left as its own corner allows; and
+  the floor is capped at the un-nudged position, so it can only ever restrict LEFTWARD
+  travel — nudge 0 must draw exactly where it always did on every device. Size the limit
+  from measured ink, never from `fontPct`: "9:41" renders 0.072 of the screen width, not
+  the ~0.045 the font size suggests.
 - **The status bar's plate picks its row by ROUGHNESS, not by depth or variance**
   (`lib/statusBar.ts`). A dropped capture carries its own bar — 7:23, 61% battery —
   so ours has to cover it, and it covers it by stretching one source row of the app's

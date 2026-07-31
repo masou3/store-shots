@@ -16,6 +16,7 @@ import {
 import { exportAllZip, type ExportProgress, type ExportSet } from '@/lib/bulkExport';
 import { DEVICE_SPECS, getSpec } from '@/lib/deviceSpecs';
 import {
+  CLOCK_NUDGE_LIMIT,
   NUDGE_LIMIT,
   STANDARD_TIME,
   platformFor,
@@ -161,6 +162,31 @@ function nudgeLabel(n: number | undefined): string {
   return `${Math.abs(v * 100).toFixed(1)}% ${v > 0 ? 'down' : 'up'}`;
 }
 
+// Same reasoning one axis over: the clock's sign is only unambiguous once it is
+// spelled, and a reader coming from the row above will expect it to be.
+function clockLabel(n: number | undefined): string {
+  const v = n ?? 0;
+  if (!v) return 'default';
+  return `${Math.abs(v * 100).toFixed(1)}% ${v > 0 ? 'right' : 'left'}`;
+}
+
+// Hit-test a box that turns with the device it sits inside. The pointer is
+// rotated back into the box's own frame rather than an axis-aligned bounding
+// box being grown around the box: the clock is wide and short, so on a tilted
+// or landscape frame its bbox would swallow a lot of screen that isn't it.
+function insideRotated(
+  sx: number,
+  sy: number,
+  b: { cx: number; cy: number; w: number; h: number; rotationDeg: number },
+): boolean {
+  const rad = (-b.rotationDeg * Math.PI) / 180;
+  const dx = sx - b.cx;
+  const dy = sy - b.cy;
+  const lx = dx * Math.cos(rad) - dy * Math.sin(rad);
+  const ly = dx * Math.sin(rad) + dy * Math.cos(rad);
+  return Math.abs(lx) <= b.w / 2 && Math.abs(ly) <= b.h / 2;
+}
+
 // The status bar drawn over the capture. Off/on is the only control most sets
 // need; the time box and glyph colour stay visible only once it's on, and the
 // time placeholder shows the platform standard it will use if left blank.
@@ -225,6 +251,19 @@ function StatusBarControls({
               className="w-36"
             />
           </Row>
+          {/* Moves the clock alone; the icons stay pinned to the far margin.
+              Draggable on the preview too — grab the clock itself. */}
+          <Row label={`Clock ${clockLabel(config.clockNudge)}`}>
+            <input
+              type="range"
+              min={-CLOCK_NUDGE_LIMIT}
+              max={CLOCK_NUDGE_LIMIT}
+              step={0.001}
+              value={config.clockNudge ?? 0}
+              onChange={(e) => onChange({ ...config, clockNudge: Number(e.target.value) })}
+              className="w-36"
+            />
+          </Row>
         </>
       )}
       <label className="flex items-center gap-2 text-xs text-neutral-400">
@@ -248,7 +287,7 @@ function StatusBarControls({
           />
         </Row>
       )}
-      {config.barNudge || config.indicatorNudge ? (
+      {config.barNudge || config.indicatorNudge || config.clockNudge ? (
         <p className="text-[11px] leading-snug text-neutral-600">
           Nudges are a fraction of the screen&rsquo;s short side, so they hold their look
           across sizes and orientations — and apply to every screen in the set.
@@ -533,8 +572,11 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef(0);
   // Preview drag: which element is grabbed and the offsets/pointer at grab time.
+  // The clock is the odd one out — it edits the THEME rather than the slide's
+  // layout, moves on one axis, and takes none of the snapping — so it carries
+  // its own fields and ignores the rest.
   const dragRef = useRef<{
-    target: 'device' | 'text';
+    target: 'device' | 'text' | 'clock';
     startSX: number;
     startSY: number;
     baseX: number;
@@ -547,6 +589,12 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
     cY0: number;
     otherCX: number;
     otherCY: number;
+    // Clock only: the nudge at grab time, and the chrome frame it lives in.
+    // rotationDeg turns a canvas-space drag into the SCREEN's left/right, which
+    // is the only axis the nudge means anything on.
+    clockBase?: number;
+    clockRotationDeg?: number;
+    clockUnit?: number;
   } | null>(null);
   const didDragRef = useRef(false);
   // Active alignment guides (preview overlay while dragging).
@@ -843,6 +891,30 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
         setBlockH,
         spillPrev: prev?.layout.overlapNext ? prev : undefined,
       });
+      // The clock is tested first. It sits inside the device's box, which would
+      // otherwise always win, and it is by far the smaller of the two targets.
+      if (r.clock && insideRotated(sx, sy, r.clock)) {
+        dragRef.current = {
+          target: 'clock',
+          startSX: sx,
+          startSY: sy,
+          baseX: 0,
+          baseY: 0,
+          base: slide.layout,
+          moved: false,
+          // Unused by this target: the clock has nothing on the canvas to align
+          // to, so it takes no snapping and draws no guides.
+          cX0: 0,
+          cY0: 0,
+          otherCX: 0,
+          otherCY: 0,
+          clockBase: statusBar.clockNudge ?? 0,
+          clockRotationDeg: r.clock.rotationDeg,
+          clockUnit: r.clock.unit,
+        };
+        canvasRef.current?.setPointerCapture(e.pointerId);
+        return;
+      }
       const inDevice =
         Math.abs(sx - r.device.cx) <= r.device.w / 2 && Math.abs(sy - r.device.cy) <= r.device.h / 2;
       const inText =
@@ -869,7 +941,7 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
       };
       canvasRef.current?.setPointerCapture(e.pointerId);
     },
-    [eventToStore, slide, theme, previewSize, setBlockH, currentIndex, slides],
+    [eventToStore, slide, theme, previewSize, setBlockH, currentIndex, slides, statusBar],
   );
 
   const onCanvasPointerMove = useCallback(
@@ -886,6 +958,7 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
           spillPrev: prev?.layout.overlapNext ? prev : undefined,
         });
         const over =
+          (r.clock !== null && insideRotated(sx, sy, r.clock)) ||
           (Math.abs(sx - r.device.cx) <= r.device.w / 2 &&
             Math.abs(sy - r.device.cy) <= r.device.h / 2) ||
           (sx >= r.text.x && sx <= r.text.x + r.text.w && sy >= r.text.y && sy <= r.text.y + r.text.h);
@@ -902,6 +975,24 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
       if (!d.moved && cssMove < 3) return;
       d.moved = true;
       didDragRef.current = true;
+
+      if (d.target === 'clock') {
+        // Into the screen's own axes first: on a landscape or tilted frame,
+        // "right" on the canvas is not right on the screen.
+        const rad = (-(d.clockRotationDeg ?? 0) * Math.PI) / 180;
+        const lx = dx * Math.cos(rad) - dy * Math.sin(rad);
+        // Vertical is dropped on purpose. barNudge carries the WHOLE bar, icons
+        // included, so folding it in here would mean a sideways drag that also
+        // shifted the icons — that axis stays the Bar nudge slider's.
+        const next = Math.max(
+          -CLOCK_NUDGE_LIMIT,
+          Math.min(CLOCK_NUDGE_LIMIT, (d.clockBase ?? 0) + lx / (d.clockUnit || 1)),
+        );
+        // The theme, not the slide: the bar is set-wide, so this moves the
+        // clock on every screen at once, exactly as the slider does.
+        patchTheme({ statusBar: { ...statusBar, clockNudge: next } });
+        return;
+      }
 
       // Snap the dragged object's centre to the canvas centre or the other
       // object's centre when within threshold; draw a guide at each snap.
@@ -940,7 +1031,20 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
       patchSlide(slide.id, { layout: { ...d.base, ...patch } });
       setGuides(nextGuides);
     },
-    [eventToStore, patchSlide, slide.id, slide, theme, size, previewSize, setBlockH, currentIndex, slides],
+    [
+      eventToStore,
+      patchSlide,
+      patchTheme,
+      statusBar,
+      slide.id,
+      slide,
+      theme,
+      size,
+      previewSize,
+      setBlockH,
+      currentIndex,
+      slides,
+    ],
   );
 
   const onCanvasPointerUp = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
