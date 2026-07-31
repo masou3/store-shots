@@ -69,27 +69,34 @@ function primaryFamily(id: FontFamilyId): string {
 // silently falls back to a system font — identically in preview and export,
 // so it would never be caught by eye. Explicitly load every combination
 // renderSlide can draw before the first draw and before every export.
+//
+// Inter is loaded alongside the theme's family whatever that family is: the
+// status bar draws in Inter regardless of the headline face, so a Poppins set
+// would otherwise export its clock in a system fallback.
 export async function loadRenderFonts(familyId: FontFamilyId = 'inter'): Promise<void> {
   if (typeof document === 'undefined') return;
-  const family = primaryFamily(familyId);
+  const families = renderFamilies(familyId);
   await Promise.all(
-    RENDER_WEIGHTS.map((w) => document.fonts.load(`${w} 16px ${family}`)),
+    families.flatMap((family) => RENDER_WEIGHTS.map((w) => document.fonts.load(`${w} 16px ${family}`))),
   );
   await document.fonts.ready;
+}
+
+function renderFamilies(familyId: FontFamilyId): string[] {
+  return [...new Set([primaryFamily(familyId), primaryFamily('inter')])];
 }
 
 // Same class of guard as the dimension-drift throw in export: check() is the
 // assertion that the faces actually made it into the font set — load()
 // resolves (with an empty list) even when nothing matched.
 export function assertRenderFonts(familyId: FontFamilyId = 'inter'): void {
-  const family = primaryFamily(familyId);
-  const missing = RENDER_WEIGHTS.filter(
-    (w) => !document.fonts.check(`${w} 16px ${family}`),
-  );
-  if (missing.length > 0) {
-    throw new Error(
-      `Font ${family} is not loaded for weight(s) ${missing.join(', ')}. ` +
-        'Export aborted: the render would silently fall back to a system font.',
-    );
+  for (const family of renderFamilies(familyId)) {
+    const missing = RENDER_WEIGHTS.filter((w) => !document.fonts.check(`${w} 16px ${family}`));
+    if (missing.length > 0) {
+      throw new Error(
+        `Font ${family} is not loaded for weight(s) ${missing.join(', ')}. ` +
+          'Export aborted: the render would silently fall back to a system font.',
+      );
+    }
   }
 }

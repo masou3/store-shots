@@ -21,6 +21,7 @@ import { drawGrain } from './grain';
 import { wrapRichText, lineWidth, type RichLine } from './text';
 import { resolveFontFamily } from './fonts';
 import { getBitmap } from './images';
+import { drawScreenChrome, type ScreenFit } from './statusBar';
 import {
   ASCENT_EM,
   BUTTON_THICKNESS_PCT,
@@ -1016,24 +1017,40 @@ function drawDevice(
   ctx.clip();
   ctx.fillStyle = SCREEN_PLACEHOLDER_FILL;
   ctx.fillRect(-screenW / 2, -screenH / 2, screenW, screenH);
+  // Landscape: counter-rotate the capture by -90° (undoing the frame's turn)
+  // so app UI reads upright. In that rotated frame the screen rect's fill
+  // extents swap — the wide capture then covers the wide-on-canvas screen
+  // with matched aspect. Portrait (imageCounterDeg 0) is unchanged. The status
+  // bar shares this frame: it belongs to the capture, not to the silhouette,
+  // so it must read upright alongside it.
+  const rw = geo.imageCounterDeg ? screenH : screenW;
+  const rh = geo.imageCounterDeg ? screenW : screenH;
+  let fit: ScreenFit | null = null;
   if (bmp) {
-    ctx.save();
-    // Landscape: counter-rotate the capture by -90° (undoing the frame's turn)
-    // so app UI reads upright. In that rotated frame the screen rect's fill
-    // extents swap — the wide capture then covers the wide-on-canvas screen
-    // with matched aspect. Portrait (imageCounterDeg 0) is unchanged.
-    if (geo.imageCounterDeg) ctx.rotate((geo.imageCounterDeg * Math.PI) / 180);
-    const rw = geo.imageCounterDeg ? screenH : screenW;
-    const rh = geo.imageCounterDeg ? screenW : screenH;
     const s =
       layout.imageFit === 'contain'
         ? Math.min(rw / bmp.width, rh / bmp.height)
         : Math.max(rw / bmp.width, rh / bmp.height);
-    const dw = bmp.width * s;
-    const dh = bmp.height * s;
-    ctx.drawImage(bmp, -dw / 2, -dh / 2, dw, dh);
+    fit = { dw: bmp.width * s, dh: bmp.height * s, scale: s };
+    ctx.save();
+    if (geo.imageCounterDeg) ctx.rotate((geo.imageCounterDeg * Math.PI) / 180);
+    ctx.drawImage(bmp, -fit.dw / 2, -fit.dh / 2, fit.dw, fit.dh);
     ctx.restore();
   }
+  // Over the capture, still inside the screen clip, so it can never spill onto
+  // the bezel and the corner radius crops it like real screen content.
+  ctx.save();
+  if (geo.imageCounterDeg) ctx.rotate((geo.imageCounterDeg * Math.PI) / 180);
+  drawScreenChrome(ctx, {
+    rw,
+    rh,
+    bmp,
+    fit,
+    spec,
+    theme,
+    portrait: geo.imageCounterDeg === 0,
+  });
+  ctx.restore();
   ctx.restore();
 
   drawCutout(ctx, spec, screenW, screenH);

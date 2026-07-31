@@ -43,6 +43,32 @@ Each is load-bearing and easy to "fix" back into a bug.
   canvases of different aspect — that is the whole reason the gate and two-set model
   exist. The clone copies once (images under new IndexedDB keys, duplicated not aliased)
   and truncates to the target's cap from the tail, warning first.
+- **OS chrome is drawn at BOTH ends, and the bands are as shallow as they can be**
+  (`lib/statusBar.ts`). The status bar at the top and the home indicator at the bottom
+  are one mechanism seen twice: plate over whatever the capture's own OS drew, then draw
+  the target platform's. The pills are not interchangeable — iOS's is 0.32 of screen
+  width sitting 0.018 up, Android's 0.262 sitting 0.025 up — and swapping them is most of
+  what stops an Android capture reading as one. Each band is sized to the capture's
+  GLYPH INK plus what our own chrome needs to sit on, never to the platform's full bar
+  height: the empty rows below a capture's clock are just app background, and plating
+  them costs real content. The plate also overdraws past the screen edge, because the
+  clip's sub-pixel boundary otherwise leaves a sliver of the capture's own pill sitting
+  right on the edge. Note the limit this cannot fix: an Android app laid out without
+  iOS's 34pt bottom safe area puts its tab labels where the iOS indicator goes, so on an
+  iPhone frame the two collide no matter what the plate does.
+- **The status bar's plate picks its row by ROUGHNESS, not by depth or variance**
+  (`lib/statusBar.ts`). A dropped capture carries its own bar — 7:23, 61% battery —
+  so ours has to cover it, and it covers it by stretching one source row of the app's
+  background across the band. The obvious row (the bottom of the band) lands inside the
+  app's first header about half the time, and a stretched row turns every icon it
+  crosses into a full-height stripe. So a window of rows below the capture's own bar is
+  searched and the smoothest wins, judged by mean step between ADJACENT columns at 128
+  columns: plain variance can't tell a horizontal gradient (stretches perfectly) from a
+  line of text (stretches into stripes), and at 16 columns text averaged away into
+  looking flat. Above the roughness threshold nothing is stretched at all — the band
+  gets the flattest row's mean colour. Also: `theme.statusBar` undefined means ON, which
+  is what retro-fits the bar onto every project saved before it existed. There is no
+  migration step; the default IS the migration.
 - **Grain defaults to 0.02 and roughly triples PNG size** (`lib/grain.ts`; fixed-seed
   PRNG so exports are byte-identical across sessions — the project round-trip depends on
   it). It is a slider because the right amount is taste; 0 skips the pass.

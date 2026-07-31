@@ -14,7 +14,14 @@ import {
   type StoreKind,
 } from '@/lib/storeKinds';
 import { exportAllZip, type ExportProgress, type ExportSet } from '@/lib/bulkExport';
-import { DEVICE_SPECS } from '@/lib/deviceSpecs';
+import { DEVICE_SPECS, getSpec } from '@/lib/deviceSpecs';
+import {
+  STANDARD_TIME,
+  platformFor,
+  statusBarOf,
+  type StatusBarConfig,
+  type StatusBarPlatform,
+} from '@/lib/statusBar';
 import { isDemoted, layoutGroups } from '@/lib/layouts';
 import { GRADIENT_PACKS } from '@/lib/presets';
 import { FONT_FAMILIES, loadRenderFonts } from '@/lib/fonts';
@@ -140,6 +147,73 @@ function DuotoneControls({
           </Row>
         </>
       )}
+    </>
+  );
+}
+
+// The status bar drawn over the capture. Off/on is the only control most sets
+// need; the time box and glyph colour stay visible only once it's on, and the
+// time placeholder shows the platform standard it will use if left blank.
+function StatusBarControls({
+  config,
+  platform,
+  onChange,
+}: {
+  config: StatusBarConfig;
+  platform: StatusBarPlatform;
+  onChange: (c: StatusBarConfig) => void;
+}) {
+  return (
+    <>
+      <label className="flex items-center gap-2 text-xs text-neutral-400">
+        <input
+          type="checkbox"
+          checked={config.show}
+          onChange={(e) => onChange({ ...config, show: e.target.checked })}
+        />
+        Status bar ({platform === 'ios' ? 'iOS' : 'Android'}, full battery)
+      </label>
+      {config.show && (
+        <>
+          <Row label="Time">
+            <input
+              className={selectCls}
+              value={config.time ?? ''}
+              placeholder={`${STANDARD_TIME[platform]} (standard)`}
+              onChange={(e) =>
+                onChange({ ...config, time: e.target.value.trim() ? e.target.value : undefined })
+              }
+            />
+          </Row>
+          <Row label="Glyphs">
+            <select
+              className={selectCls}
+              value={config.style}
+              onChange={(e) => onChange({ ...config, style: e.target.value as StatusBarConfig['style'] })}
+            >
+              <option value="auto">auto</option>
+              <option value="light">light</option>
+              <option value="dark">dark</option>
+            </select>
+          </Row>
+          <label className="flex items-center gap-2 text-xs text-neutral-400">
+            <input
+              type="checkbox"
+              checked={config.plate}
+              onChange={(e) => onChange({ ...config, plate: e.target.checked })}
+            />
+            Cover the capture&rsquo;s own bar
+          </label>
+        </>
+      )}
+      <label className="flex items-center gap-2 text-xs text-neutral-400">
+        <input
+          type="checkbox"
+          checked={config.homeIndicator}
+          onChange={(e) => onChange({ ...config, homeIndicator: e.target.checked })}
+        />
+        Home indicator ({platform === 'ios' ? 'iOS pill' : 'Android'})
+      </label>
     </>
   );
 }
@@ -516,6 +590,10 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
   };
 
   const size = getSize(sizeId);
+  const statusBar = statusBarOf(theme);
+  // Which OS the bar imitates follows the frame, not the store: an iPhone frame
+  // in a Play set (a cross-class clone mid-retarget) must still wear an iOS bar.
+  const statusPlatform = platformFor(getSpec(theme.frameId), theme);
   const slide = slides.find((s) => s.id === currentSlideId) ?? slides[0];
   const currentIndex = slides.indexOf(slide);
   // Set-wide zones split by orientation; the current slide's preview/drag/export
@@ -1655,6 +1733,11 @@ function Workbench({ activeStore }: { activeStore: StoreKind }) {
                 <option value="contain">contain</option>
               </select>
             </Row>
+            <StatusBarControls
+              config={statusBar}
+              platform={statusPlatform}
+              onChange={(statusBar) => patchTheme({ statusBar })}
+            />
           </Section>
 
           <Section title="Layout">

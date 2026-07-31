@@ -1,3 +1,6 @@
+// Type-only, so no runtime cycle: statusBar.ts imports Theme back from here.
+import type { StatusBarConfig } from './statusBar';
+
 // Phones and tablets are separate submission obligations in both stores, and
 // a set belongs to exactly one of them. Not an orientation — see Orientation,
 // which is per-slide and swaps the canvas rather than changing the obligation.
@@ -140,6 +143,11 @@ export type Theme = {
   // A glowing border framing the whole screenshot edge (over everything,
   // including text and phone). strength 0 = off; colour is the glow colour.
   edgeGlow?: { strength: number; colour: string };
+  // The OS status bar drawn over the capture (see lib/statusBar.ts). Set-wide
+  // because the clock is a set-wide convention, not per-screen dressing.
+  // Undefined = DEFAULT_STATUS_BAR, which is what retro-fits it onto projects
+  // saved before it existed.
+  statusBar?: StatusBarConfig;
   // Set-wide panoramic background: one photo spread across the whole set, each
   // slide showing its horizontal slice (like gradient.continuous, but a photo).
   // A slide's own `bg` overrides it for that slide. Same blur/darken as bg.

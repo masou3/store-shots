@@ -9,6 +9,7 @@ import {
   type LayoutId,
 } from './layouts';
 import { clearAllImages, ensureBitmap, getImageBlob, removeImage, saveImage } from './imageStore';
+import { DEFAULT_STATUS_BAR } from './statusBar';
 import {
   STORE_KINDS,
   capFor,
@@ -27,6 +28,7 @@ const BASE_THEME: Omit<Theme, 'sizeId' | 'frameId' | 'lastFrameId'> = {
   frameColour: null,
   gradient: { mode: 'gradient', from: '#4f46e5', to: '#ec4899', angle: 160, continuous: false },
   grain: 0.02,
+  statusBar: DEFAULT_STATUS_BAR,
   text: {
     family: 'inter',
     sizePct: 9,
